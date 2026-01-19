@@ -72,6 +72,7 @@ Radicale 中至少维护以下日历集合：
 - 必须提供“截止约束”（显式或隐式）
 
 #### 任务元数据（推荐：DESCRIPTION 结构化块）
+
 用户可在备注中手动填写，系统解析：
 [AI_TASK]
 deadline=2026-02-01 23:59
@@ -79,3 +80,73 @@ estimate=90m
 window=weeknights
 flex=soft
 [/AI_TASK]
+
+也可支持等价的 `X-AI-*` 字段（机器友好，可选）：
+- `X-AI-TYPE: TASK`
+- `X-AI-DEADLINE`
+- `X-AI-ESTIMATE-MIN`
+- `X-AI-WINDOW`
+- `X-AI-FLEX`
+
+---
+
+## 6. 任务调度与排期规则
+
+### 6.1 基本原则
+- 固定日程 > 已排期任务 > 未排期任务
+- deadline 默认为硬约束（除非 `flex=soft`）
+- 用户手动移动/标记的事件可被视为锁定（`X-AI-LOCK:1`）
+
+### 6.2 排期输出
+调度器会在 `schedule` 中创建新的 `VEVENT`：
+
+- 含明确 `DTSTART / DTEND`
+- `CATEGORIES: TASK,SCHEDULED`
+- `X-AI-ORIGIN-UID` 指向原任务（inbox 事件）
+- 支持拆分为多个子事件
+
+---
+
+## 7. 动态调整机制
+
+触发增量重排的情况：
+- 用户新增/修改固定日程
+- 用户修改任务 deadline / estimate
+- GPT 更新用时预估
+- 外部 ICS 更新占用时间
+
+原则：
+- 只重排受影响任务
+- `X-AI-LOCK:1` 的事件不移动
+
+---
+
+## 8. 系统组件划分（建议仓库结构）
+
+repo/
+├── caldav/ # Radicale 配置 / Docker
+├── aggregator/ # WebDAV / ICS → CalDAV（external-feeds）
+├── scheduler/ # 任务识别 + 排期逻辑（inbox → schedule）
+├── ai/ # GPT：估时 / 拆分 / 摘要 / 决策建议
+├── config/
+│ ├── calendars.yaml
+│ └── rules.yaml
+└── docs/
+
+---
+
+## 9. 用户端使用方式（无学习成本）
+
+- 手机原生日历订阅/登录 CalDAV
+- 新建事件：
+  - 有明确时间 → 固定日程（写入 `schedule`）
+  - 无明确时间 + 在备注写截止/用时 → 任务（写入 `inbox-tasks`）
+- 系统自动排期：任务会在 `schedule` 中出现一个或多个占用时段
+
+---
+
+## 10. 非目标（明确不做）
+
+- ❌ 自定义前端日历 UI
+- ❌ 替代系统 To-Do App
+- ❌ 强制用户精确输入参数
