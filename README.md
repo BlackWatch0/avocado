@@ -1,6 +1,6 @@
 # avocado
 
-A self-hosted, CalDAV-based intelligent scheduler that aggregates external calendars and turns fuzzy tasks into dynamically planned events using AI.
+A self-hosted, CalDAV-based intelligent scheduler that turns fuzzy tasks into dynamically planned events using AI.
 
 **Language:** 中文 | [English](README.en.md)
 
@@ -8,7 +8,7 @@ A self-hosted, CalDAV-based intelligent scheduler that aggregates external calen
 
 ## 项目名称
 
-**avocado**（基于 Radicale 的 WebDAV/ICS 聚合与智能任务调度系统）
+**avocado**（基于 CalDAV 的智能任务调度系统）
 
 ---
 
@@ -16,7 +16,7 @@ A self-hosted, CalDAV-based intelligent scheduler that aggregates external calen
 
 avocado 是一个自托管的智能日程与任务管理系统，以 **CalDAV** 作为唯一用户输入与输出接口，实现：
 
-- 聚合多个 **WebDAV / URL-ICS** 外部日历
+- 聚合多个 **CalDAV** 外部日历
 - 允许用户通过手机原生日历直接创建日程或任务
 - 将“不定时段任务”交由 GPT 自动排期
 - 支持动态重排、拆分任务、冲突感知
