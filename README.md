@@ -14,7 +14,7 @@ A self-hosted, CalDAV-based intelligent scheduler that turns fuzzy tasks into dy
 
 ## 项目简介
 
-avocado 是一个自托管的智能日程与任务管理系统，以 **CalDAV** 作为唯一用户输入与输出接口，实现：
+avocado 是一个自托管的智能日程与任务管理系统，以 **CalDAV** 作为唯一用户输入与输出接口。它可以作为挂件管理服务器上的用户日程，实现：
 
 - 聚合多个 **CalDAV** 外部日历
 - 允许用户通过手机原生日历直接创建日程或任务
@@ -44,13 +44,13 @@ avocado 是一个自托管的智能日程与任务管理系统，以 **CalDAV** 
 
 ### CalDAV Server（核心数据层）
 
-- **Radicale**（轻量、纯协议、适合作为“日程数据库”、易于自动化/AI 接入）
+- 兼容所有标准 **CalDAV** 服务器（不绑定特定实现）
 
 ---
 
 ## 日历结构设计（强约定）
 
-Radicale 中至少维护以下日历集合：
+CalDAV 服务器中至少维护以下日历集合：
 
 | 日历名 | 用途 |
 | --- | --- |
@@ -141,7 +141,7 @@ flex=soft
 
 ```
 repo/
-├── caldav/        # Radicale 配置 / Docker
+├── caldav/        # CalDAV 服务器配置 / Docker（可选）
 ├── aggregator/    # WebDAV / ICS → CalDAV（external-feeds）
 ├── scheduler/     # 任务识别 + 排期逻辑（inbox → schedule）
 ├── ai/            # GPT：估时 / 拆分 / 摘要 / 决策建议

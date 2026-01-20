@@ -8,13 +8,13 @@ A self-hosted, CalDAV-based intelligent scheduler that aggregates external calen
 
 ## Project Name
 
-**avocado** (a Radicale-based WebDAV/ICS aggregation and intelligent task scheduling system)
+**avocado** (a CalDAV-based WebDAV/ICS aggregation and intelligent task scheduling system)
 
 ---
 
 ## Overview
 
-avocado is a self-hosted smart calendar and task management system that uses **CalDAV** as the only input and output interface:
+avocado is a self-hosted smart calendar and task management system that uses **CalDAV** as the only input and output interface. It can act as a widget managing user calendars on the server:
 
 - Aggregates multiple **WebDAV / URL-ICS** external calendars
 - Lets users create events or tasks directly from the native mobile calendar
@@ -44,13 +44,13 @@ System positioning:
 
 ### CalDAV Server (Core Data Layer)
 
-- **Radicale** (lightweight, protocol-focused, ideal as a “calendar database,” easy for automation/AI integration)
+- Compatible with all standard **CalDAV** servers (no vendor lock-in)
 
 ---
 
 ## Calendar Structure (Strong Conventions)
 
-Radicale should maintain at least the following collections:
+A CalDAV server should maintain at least the following collections:
 
 | Calendar | Purpose |
 | --- | --- |
@@ -141,7 +141,7 @@ Principles:
 
 ```
 repo/
-├── caldav/        # Radicale config / Docker
+├── caldav/        # CalDAV server config / Docker (optional)
 ├── aggregator/    # WebDAV / ICS → CalDAV (external-feeds)
 ├── scheduler/     # Task recognition + scheduling (inbox → schedule)
 ├── ai/            # GPT: estimation / splitting / summaries / decisions
