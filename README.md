@@ -168,3 +168,31 @@ repo/
 - ❌ 自定义前端日历 UI
 - ❌ 替代系统 To-Do App
 - ❌ 强制用户精确输入参数
+
+---
+
+## Nextcloud CalDAV 增量同步与解析（Python 3.11+）
+
+该模块提供 Nextcloud CalDAV 的增量同步、ICS 解析与 AI 标签解析。支持纯 HTTP 实现，便于后续替换库实现。
+
+### 最小运行示例（CLI）
+
+```bash
+export NEXTCLOUD_BASE="https://cloud.example.com/"
+export NEXTCLOUD_USER="your-user"
+export NEXTCLOUD_PASS="app-password"
+
+python -m caldav_sync.cli --collection "https://cloud.example.com/remote.php/dav/calendars/your-user/your-calendar/"
+```
+
+### Docker 运行示例
+
+```bash
+docker build -t avocado-caldav .
+docker run --rm \\
+  -e NEXTCLOUD_BASE="https://cloud.example.com/" \\
+  -e NEXTCLOUD_USER="your-user" \\
+  -e NEXTCLOUD_PASS="app-password" \\
+  avocado-caldav \\
+  python -m caldav_sync.cli --collection "https://cloud.example.com/remote.php/dav/calendars/your-user/your-calendar/"
+```
