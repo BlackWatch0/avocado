@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -94,6 +95,17 @@ class WebAdminTests(unittest.TestCase):
         self.assertIn("cal-1", rules["per_calendar_defaults"])
         self.assertEqual(rules["per_calendar_defaults"]["cal-1"]["mode"], "immutable")
         self.assertTrue(rules["per_calendar_defaults"]["cal-1"]["locked"])
+
+    def test_ai_connectivity_api(self) -> None:
+        with mock.patch(
+            "avocado.web_admin.OpenAICompatibleClient.test_connectivity",
+            return_value=(True, "Connected. Model response: OK"),
+        ):
+            resp = self.client.post("/api/ai/test")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("Connected", data["message"])
 
 
 if __name__ == "__main__":

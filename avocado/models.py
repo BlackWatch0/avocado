@@ -6,6 +6,29 @@ from typing import Any
 
 
 DEFAULT_EDITABLE_FIELDS = ["start", "end", "summary", "location", "description"]
+DEFAULT_AI_SYSTEM_PROMPT = """You are Avocado, an AI schedule planner.
+You must respect constraints and only return JSON in this schema:
+{
+  "changes": [
+    {
+      "calendar_id": "string",
+      "uid": "string",
+      "start": "ISO8601 datetime",
+      "end": "ISO8601 datetime",
+      "summary": "string",
+      "location": "string",
+      "description": "string",
+      "reason": "string"
+    }
+  ]
+}
+
+Rules:
+1. Never modify events that are locked=true or mandatory=true.
+2. Only edit fields: start, end, summary, location, description.
+3. Preserve user intent from [AI Task] block.
+4. Keep output deterministic and concise.
+"""
 
 
 def _ensure_tz(dt: datetime) -> datetime:
@@ -60,19 +83,23 @@ class CalDAVConfig:
 
 @dataclass
 class AIConfig:
-    base_url: str = ""
+    base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o-mini"
     timeout_seconds: int = 90
+    system_prompt: str = DEFAULT_AI_SYSTEM_PROMPT
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AIConfig":
         data = data or {}
         return cls(
-            base_url=str(data.get("base_url", "")).strip(),
+            base_url=str(data.get("base_url", "https://api.openai.com/v1")).strip()
+            or "https://api.openai.com/v1",
             api_key=str(data.get("api_key", "")).strip(),
             model=str(data.get("model", "gpt-4o-mini")).strip() or "gpt-4o-mini",
             timeout_seconds=int(data.get("timeout_seconds", 90)),
+            system_prompt=str(data.get("system_prompt", DEFAULT_AI_SYSTEM_PROMPT)).strip()
+            or DEFAULT_AI_SYSTEM_PROMPT,
         )
 
 
