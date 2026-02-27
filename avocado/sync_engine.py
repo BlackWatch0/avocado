@@ -389,6 +389,20 @@ class SyncEngine:
             for stage_event in sorted(stage_events, key=lambda item: ((item.uid or ""), (item.href or ""))):
                 if not stage_event.uid:
                     continue
+                if _managed_uid_prefix_depth(stage_event.uid) >= 2:
+                    delete_ok = caldav_service.delete_event(
+                        staging_info.calendar_id,
+                        uid=stage_event.uid,
+                        href=stage_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=staging_info.calendar_id,
+                        uid=stage_event.uid,
+                        action="purge_nested_stage_uid",
+                        details={"trigger": trigger, "delete_ok": delete_ok},
+                    )
+                    should_replan = True
+                    continue
                 if stage_event.uid in stage_map:
                     delete_ok = caldav_service.delete_event(
                         staging_info.calendar_id,
@@ -410,6 +424,77 @@ class SyncEngine:
             for user_event in sorted(user_events, key=lambda item: ((item.uid or ""), (item.href or ""))):
                 if not user_event.uid:
                     continue
+                if _managed_uid_prefix_depth(user_event.uid) >= 2:
+                    legacy_nested_uid = user_event.uid
+                    collapsed_uid = _collapse_nested_managed_uid(user_event.uid)
+                    if collapsed_uid != user_event.uid:
+                        existing_collapsed = user_map.get(collapsed_uid)
+                        if existing_collapsed is None:
+                            existing_collapsed = caldav_service.get_event_by_uid(user_info.calendar_id, collapsed_uid)
+                        if existing_collapsed is not None:
+                            delete_ok = caldav_service.delete_event(
+                                user_info.calendar_id,
+                                uid=user_event.uid,
+                                href=user_event.href,
+                            )
+                            user_map[collapsed_uid] = existing_collapsed
+                            self.state_store.record_audit_event(
+                                calendar_id=user_info.calendar_id,
+                                uid=legacy_nested_uid,
+                                action="purge_nested_user_uid",
+                                details={
+                                    "trigger": trigger,
+                                    "collapsed_uid": collapsed_uid,
+                                    "delete_ok": delete_ok,
+                                },
+                            )
+                            should_replan = True
+                            continue
+                        migrated_user = user_event.with_updates(
+                            calendar_id=user_info.calendar_id,
+                            uid=collapsed_uid,
+                            href="",
+                            source="user",
+                        )
+                        try:
+                            migrated_user = caldav_service.upsert_event(user_info.calendar_id, migrated_user)
+                            delete_ok = caldav_service.delete_event(
+                                user_info.calendar_id,
+                                uid=user_event.uid,
+                                href=user_event.href,
+                            )
+                            user_event = migrated_user
+                            self.state_store.record_audit_event(
+                                calendar_id=user_info.calendar_id,
+                                uid=collapsed_uid,
+                                action="collapse_nested_user_uid",
+                                details={
+                                    "trigger": trigger,
+                                    "legacy_uid": legacy_nested_uid,
+                                    "collapsed_uid": collapsed_uid,
+                                    "delete_ok": delete_ok,
+                                },
+                            )
+                            should_replan = True
+                        except Exception:
+                            delete_ok = caldav_service.delete_event(
+                                user_info.calendar_id,
+                                uid=user_event.uid,
+                                href=user_event.href,
+                            )
+                            self.state_store.record_audit_event(
+                                calendar_id=user_info.calendar_id,
+                                uid=legacy_nested_uid,
+                                action="purge_invalid_nested_user_uid",
+                                details={
+                                    "trigger": trigger,
+                                    "legacy_uid": legacy_nested_uid,
+                                    "collapsed_uid": collapsed_uid,
+                                    "delete_ok": delete_ok,
+                                },
+                            )
+                            should_replan = True
+                            continue
 
                 if user_event.uid in user_map:
                     delete_ok = caldav_service.delete_event(
@@ -432,12 +517,24 @@ class SyncEngine:
             for intake_event in sorted(intake_events, key=lambda item: ((item.uid or ""), (item.href or ""))):
                 if not intake_event.uid:
                     continue
-                if _managed_uid_prefix_depth(intake_event.uid) >= 2:
+                intake_uid_depth = _managed_uid_prefix_depth(intake_event.uid)
+                # Intake calendar should only contain raw user-created events (no managed UID prefix).
+                # Managed-prefixed entries are leftovers and must be purged to avoid re-import loops.
+                if intake_uid_depth >= 1:
+                    delete_ok = caldav_service.delete_event(
+                        intake_info.calendar_id,
+                        uid=intake_event.uid,
+                        href=intake_event.href,
+                    )
                     self.state_store.record_audit_event(
                         calendar_id=intake_info.calendar_id,
                         uid=intake_event.uid,
-                        action="skip_nested_intake_uid",
-                        details={"trigger": trigger},
+                        action="purge_managed_intake_uid",
+                        details={
+                            "trigger": trigger,
+                            "uid_depth": intake_uid_depth,
+                            "delete_ok": delete_ok,
+                        },
                     )
                     continue
 
@@ -473,11 +570,23 @@ class SyncEngine:
                     imported_user = caldav_service.upsert_event(user_info.calendar_id, imported_user)
                 except Exception as exc:
                     if "Duplicate entry" in str(exc) or "Integrity constraint violation" in str(exc):
+                        delete_ok = caldav_service.delete_event(
+                            intake_info.calendar_id,
+                            uid=intake_event.uid,
+                            href=intake_event.href,
+                        )
+                        existing_by_uid = caldav_service.get_event_by_uid(user_info.calendar_id, user_uid)
+                        if existing_by_uid is not None:
+                            user_map[user_uid] = existing_by_uid
                         self.state_store.record_audit_event(
                             calendar_id=user_info.calendar_id,
                             uid=user_uid,
                             action="skip_intake_uid_conflict",
-                            details={"trigger": trigger},
+                            details={
+                                "trigger": trigger,
+                                "delete_ok": delete_ok,
+                                "recovered_existing_user": existing_by_uid is not None,
+                            },
                         )
                         continue
                     raise
@@ -729,6 +838,23 @@ class SyncEngine:
                     window_end=serialize_datetime(window_end) or "",
                     timezone=config.sync.timezone,
                 )
+                # Skip scheduled AI calls when planning payload is unchanged.
+                if trigger == "scheduled":
+                    payload_fingerprint = _hash_text(
+                        json.dumps(planning_payload, ensure_ascii=False, sort_keys=True)
+                    )
+                    last_payload_fingerprint = self.state_store.get_meta("last_planning_payload_fingerprint")
+                    if payload_fingerprint == last_payload_fingerprint:
+                        self.state_store.record_audit_event(
+                            calendar_id="system",
+                            uid="ai",
+                            action="skip_ai_same_payload",
+                            details={"trigger": trigger},
+                        )
+                        should_replan = False
+                    else:
+                        self.state_store.set_meta("last_planning_payload_fingerprint", payload_fingerprint)
+            if ai_client.is_configured() and should_replan:
                 messages = build_messages(planning_payload, system_prompt=config.ai.system_prompt)
                 ai_request_payload = {
                     "model": config.ai.model,
@@ -815,7 +941,6 @@ class SyncEngine:
                     continue
 
                 before_event = event.clone()
-                preserved_intent = _extract_user_intent(before_event)
                 saved_user_event = caldav_service.upsert_event(event.calendar_id, outcome.event)
                 category = str(change.get("category", "")).strip() or _infer_category(saved_user_event, change)
                 new_description, _, category_changed = set_ai_task_category(
@@ -826,17 +951,19 @@ class SyncEngine:
                 if category_changed:
                     saved_user_event.description = new_description
                     saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
-                if preserved_intent:
-                    repaired_description, _, intent_changed = set_ai_task_user_intent(
-                        saved_user_event.description,
-                        config.task_defaults,
-                        preserved_intent,
-                    )
-                    if intent_changed:
-                        saved_user_event.description = repaired_description
-                        saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
                 patch_fields = _event_patch(before_event, saved_user_event)
                 if not patch_fields:
+                    # AI already converged; consume intent to prevent repeated no-op replans.
+                    no_effect_description, _, no_effect_intent_changed = set_ai_task_user_intent(
+                        saved_user_event.description,
+                        config.task_defaults,
+                        "",
+                    )
+                    if no_effect_intent_changed:
+                        saved_user_event.description = no_effect_description
+                        saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
+                        mutable_events[key] = saved_user_event
+                        baseline_etags[key] = saved_user_event.etag
                     self.state_store.record_audit_event(
                         calendar_id=event.calendar_id,
                         uid=event.uid,
@@ -850,6 +977,17 @@ class SyncEngine:
                 reason_text = str(change.get("reason", "")).strip()
                 if not reason_text:
                     reason_text = f"AI adjusted fields: {', '.join(item['field'] for item in patch_fields)}"
+                # Consume intent after successful AI apply to avoid re-applying the same instruction.
+                consumed_description, _, consumed_intent_changed = set_ai_task_user_intent(
+                    saved_user_event.description,
+                    config.task_defaults,
+                    "",
+                )
+                if consumed_intent_changed:
+                    saved_user_event.description = consumed_description
+                    saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
+                    mutable_events[key] = saved_user_event
+                    baseline_etags[key] = saved_user_event.etag
                 self.state_store.record_audit_event(
                     calendar_id=event.calendar_id,
                     uid=event.uid,

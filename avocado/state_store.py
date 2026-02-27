@@ -55,6 +55,12 @@ class StateStore:
             updated_at TEXT NOT NULL,
             PRIMARY KEY (calendar_id, uid)
         );
+
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         """
         with self._lock:
             with self._connect() as conn:
@@ -187,6 +193,36 @@ class StateStore:
                     (calendar_id, uid),
                 ).fetchone()
         return dict(row) if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO app_meta(key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (str(key), str(value), _utc_now()),
+                )
+                conn.commit()
+
+    def get_meta(self, key: str) -> str | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT value
+                    FROM app_meta
+                    WHERE key = ?
+                    """,
+                    (str(key),),
+                ).fetchone()
+        if row is None:
+            return None
+        return str(row["value"])
 
     def ai_request_bytes_series(self, *, days: int = 90, limit: int = 5000) -> list[dict[str, Any]]:
         days = max(1, int(days))

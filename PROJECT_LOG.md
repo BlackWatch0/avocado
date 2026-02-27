@@ -38,6 +38,7 @@
 - 若存在同名托管日历（stage/user）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
 - 管理页面支持中英文双语；默认按浏览器语言自动选择，用户可手动切换并持久化偏好。
 - AI 改动仅作用于 `user_intent` 非空的事件；无意图事件即使 AI 返回变更也会被跳过并记录审计。
+- 定时同步（`trigger=scheduled`）在 planning payload 未变化时跳过 AI 请求，并记录 `skip_ai_same_payload` 审计，避免重复消耗 token。
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
   - AI: `base_url`、`api_key`、`model`
@@ -59,6 +60,9 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 修复多层 UID 连锁重排：清理嵌套 UID + AI 执行后消费意图 | `avocado/sync_engine.py` | 启动/同步时自动清理 stage 与 user-layer 中 `depth>=2` 的嵌套托管 UID；AI 对事件成功应用（或判定无实际变化）后会清空该事件 `user_intent`，避免同一指令每轮重复触发导致事件持续漂移 | 风险中等；若希望同一意图持续生效需重新填写 `user_intent` | AVO-037 |
+| 2026-02-27 | 修复 intake 新日程重复导入与删除循环问题 | `avocado/sync_engine.py` | intake 日历仅处理 raw UID（depth=0）；对已托管 UID（depth>=1）直接清理，避免再次加前缀导致 `a:b:c` 扩散；导入时遇到 UID 冲突也会尝试删除 intake 源条目并回填已存在 user 事件 | 风险低；若误判极少数手工特殊 UID，可回滚到上一版本策略 | AVO-036 |
+| 2026-02-27 | 定时同步无变化时跳过 AI 请求 | `avocado/sync_engine.py`, `avocado/state_store.py` | 新增 planning payload 指纹存储；`trigger=scheduled` 且 payload 与上次一致时不调用 AI，写入 `skip_ai_same_payload` 审计事件 | 风险低；首次部署或手动/启动触发仍会正常请求 AI，如需恢复旧行为可回滚该判定分支 | AVO-035 |
 | 2026-02-27 | 去重规划输入：不再重复收集可编辑源日历事件 | `avocado/sync_engine.py` | 构建 AI planning payload 时仅保留 immutable 源日历事件与 user-layer 事件；可编辑源日历事件由 user-layer 镜像代表，避免重复进入模型导致重复日程或错判 | 风险低；若某源事件未成功镜像到 user-layer，可能暂时不参与规划（可通过审计定位） | AVO-034 |
 | 2026-02-27 | 修复 AI 改简介后 `user_intent` 被覆盖清空 | `avocado/sync_engine.py` | AI 返回 `description` 时，应用后会强制保留原事件 `user_intent`，避免下一轮同步被判 `no_intent` 而跳过 | 风险低；仅在 AI 应用链路补一层意图保留，不影响字段冲突策略 | AVO-033 |
 | 2026-02-27 | 修复 stage 镜像 Duplicate UID 导致整轮同步失败 | `avocado/caldav_client.py`, `avocado/sync_engine.py` | `upsert_event` 在 UID 冲突时新增时间窗口检索回退；stage 镜像写入遇到 `calobjects_by_uid_index` 冲突时自动执行“删除同 UID + 重试一次”，失败则跳过单条并记录审计，不再中断整轮同步 | 风险低；极端情况下仅跳过单条 stage 镜像事件，不影响 user-layer 主写入链路 | AVO-032 |
@@ -102,6 +106,9 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-037 | 清理嵌套 UID 并避免 user_intent 重复触发 | Done | 历史 `a:b:c` 事件不再参与正常排程链路并会被收敛/清理；同一 `user_intent` 只触发一次 AI 执行，不再每轮重复改动 | P0 | AVO-036 | 2026-02-27 |
+| AVO-036 | 修复 intake 已托管 UID 重复导入与残留清理 | Done | intake 中出现已托管 UID 时不再重复导入 user-layer，且会被自动清理；同 UID 冲突不再导致源条目残留循环 | P0 | AVO-022, AVO-034 | 2026-02-27 |
+| AVO-035 | 定时同步 payload 未变化时跳过 AI 调用 | Done | 每轮 `scheduled` 同步在输入完全一致时不再触发 AI 请求，并记录可观测审计事件 | P0 | AVO-034 | 2026-02-27 |
 | AVO-034 | 规划输入去重（源编辑层与用户层不重复） | Done | AI payload 不再同时包含可编辑源事件与其 user-layer 镜像，避免重复收集造成重复日程 | P0 | AVO-022 | 2026-02-27 |
 | AVO-033 | AI 描述改写时保留 user_intent | Done | AI 返回 description 并写入后，事件 `user_intent` 仍保持用户输入，不再在下一轮出现 `ai_change_skipped_no_intent` 循环 | P0 | AVO-031 | 2026-02-27 |
 | AVO-032 | Stage 镜像 UID 冲突容错修复 | Done | 出现 `calobjects_by_uid_index` 冲突时不会导致整轮同步报错；系统会尝试修复冲突并继续后续事件处理 | P0 | AVO-022 | 2026-02-27 |
