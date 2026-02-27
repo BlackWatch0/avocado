@@ -183,7 +183,7 @@ class SyncEngine:
                     window_end=serialize_datetime(window_end) or "",
                     timezone=config.sync.timezone,
                 )
-                messages = build_messages(planning_payload)
+                messages = build_messages(planning_payload, system_prompt=config.ai.system_prompt)
                 ai_output = ai_client.generate_changes(messages=messages)
                 raw_changes = ai_output.get("changes", [])
 

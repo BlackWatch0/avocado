@@ -2,6 +2,7 @@
 const saveBtn = document.getElementById("save-btn");
 const syncBtn = document.getElementById("sync-btn");
 const refreshCalendarsBtn = document.getElementById("refresh-calendars-btn");
+const testAiBtn = document.getElementById("test-ai-btn");
 const calendarBody = document.getElementById("calendar-behaviors-body");
 
 const setStatus = (type, message) => {
@@ -27,10 +28,19 @@ const bindConfig = (cfg) => {
   document.getElementById("ai-api-key").value = "";
   document.getElementById("ai-model").value = cfg.ai?.model || "";
   document.getElementById("ai-timeout-seconds").value = cfg.ai?.timeout_seconds ?? 90;
+  document.getElementById("ai-system-prompt").value = cfg.ai?.system_prompt || "";
 
   document.getElementById("sync-window-days").value = cfg.sync?.window_days ?? 7;
   document.getElementById("sync-interval-seconds").value = cfg.sync?.interval_seconds ?? 300;
-  document.getElementById("sync-timezone").value = cfg.sync?.timezone || "UTC";
+  const timezoneEl = document.getElementById("sync-timezone");
+  const tzValue = cfg.sync?.timezone || "UTC";
+  if (![...timezoneEl.options].some((opt) => opt.value === tzValue)) {
+    const customOption = document.createElement("option");
+    customOption.value = tzValue;
+    customOption.textContent = `${tzValue} (custom)`;
+    timezoneEl.appendChild(customOption);
+  }
+  timezoneEl.value = tzValue;
 
   document.getElementById("rules-immutable-keywords").value = joinList(
     cfg.calendar_rules?.immutable_keywords || []
@@ -146,6 +156,7 @@ const readPayload = () => {
       api_key: document.getElementById("ai-api-key").value,
       model: document.getElementById("ai-model").value.trim(),
       timeout_seconds: timeoutSeconds,
+      system_prompt: document.getElementById("ai-system-prompt").value.trim(),
     },
     sync: {
       window_days: windowDays,
@@ -245,9 +256,32 @@ const refreshCalendars = async () => {
   }
 };
 
+const testAiConnectivity = async () => {
+  withPending(testAiBtn, true);
+  try {
+    setStatus("info", "Testing AI connectivity...");
+    const res = await fetch("/api/ai/test", { method: "POST" });
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`AI test failed: ${res.status} ${errorText}`);
+    }
+    const data = await res.json();
+    if (data.ok) {
+      setStatus("success", `AI connectivity OK. ${data.message || ""}`.trim());
+    } else {
+      setStatus("error", `AI connectivity failed. ${data.message || ""}`.trim());
+    }
+  } catch (err) {
+    setStatus("error", err.message || "AI connectivity test failed");
+  } finally {
+    withPending(testAiBtn, false);
+  }
+};
+
 saveBtn.addEventListener("click", saveConfig);
 syncBtn.addEventListener("click", runSync);
 refreshCalendarsBtn.addEventListener("click", refreshCalendars);
+testAiBtn.addEventListener("click", testAiConnectivity);
 
 (async () => {
   try {

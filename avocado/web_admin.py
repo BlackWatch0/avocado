@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from avocado.ai_client import OpenAICompatibleClient
 from avocado.caldav_client import CalDAVService
 from avocado.config_manager import ConfigManager
 from avocado.scheduler import SyncScheduler
@@ -186,6 +187,13 @@ def create_app() -> FastAPI:
     def trigger_sync() -> dict[str, str]:
         app.state.context.scheduler.trigger_manual()
         return {"message": "sync triggered"}
+
+    @app.post("/api/ai/test")
+    def test_ai_connectivity() -> dict[str, Any]:
+        config = app.state.context.config_manager.load()
+        client = OpenAICompatibleClient(config.ai)
+        ok, message = client.test_connectivity()
+        return {"ok": ok, "message": message}
 
     @app.get("/api/sync/status")
     def sync_status(limit: int = 20) -> dict[str, Any]:

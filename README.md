@@ -101,6 +101,7 @@ Recommendation:
 - `GET /api/config`
 - `GET /api/config/raw`
 - `PUT /api/config`
+- `POST /api/ai/test`
 - `GET /api/calendars`
 - `PUT /api/calendar-rules`
 - `POST /api/sync/run`
@@ -118,6 +119,9 @@ Admin page behavior:
   - immutable/editable
   - default locked
   - default mandatory
+- AI Base URL defaults to `https://api.openai.com/v1`
+- AI system prompt can be edited directly in admin page
+- timezone uses dropdown selection (with custom fallback option when needed)
 
 ## Test
 

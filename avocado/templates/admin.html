@@ -11,6 +11,7 @@
     <header class="top">
       <h1>Avocado Admin</h1>
       <div class="actions">
+        <button id="test-ai-btn" type="button">Test AI API</button>
         <button id="sync-btn" type="button">Run Sync</button>
         <button id="refresh-calendars-btn" type="button">Refresh Calendars</button>
         <button id="save-btn" type="button">Save Config</button>
@@ -33,13 +34,35 @@
         <label>API Key<input id="ai-api-key" type="password" placeholder="Leave empty to keep current"></label>
         <label>Model<input id="ai-model" type="text" required></label>
         <label>Timeout Seconds<input id="ai-timeout-seconds" type="number" min="1" required></label>
+        <label>System Prompt<textarea id="ai-system-prompt" rows="10"></textarea></label>
       </section>
 
       <section class="card">
         <h2>Sync</h2>
         <label>Window Days<input id="sync-window-days" type="number" min="1" required></label>
         <label>Interval Seconds<input id="sync-interval-seconds" type="number" min="30" required></label>
-        <label>Timezone<input id="sync-timezone" type="text" required></label>
+        <label>Timezone
+          <select id="sync-timezone" required>
+            <option value="UTC">UTC</option>
+            <option value="Asia/Shanghai">Asia/Shanghai</option>
+            <option value="Asia/Tokyo">Asia/Tokyo</option>
+            <option value="Asia/Singapore">Asia/Singapore</option>
+            <option value="Asia/Kolkata">Asia/Kolkata</option>
+            <option value="Europe/London">Europe/London</option>
+            <option value="Europe/Berlin">Europe/Berlin</option>
+            <option value="Europe/Paris">Europe/Paris</option>
+            <option value="Europe/Moscow">Europe/Moscow</option>
+            <option value="America/New_York">America/New_York</option>
+            <option value="America/Chicago">America/Chicago</option>
+            <option value="America/Denver">America/Denver</option>
+            <option value="America/Los_Angeles">America/Los_Angeles</option>
+            <option value="America/Toronto">America/Toronto</option>
+            <option value="America/Sao_Paulo">America/Sao_Paulo</option>
+            <option value="Australia/Sydney">Australia/Sydney</option>
+            <option value="Australia/Melbourne">Australia/Melbourne</option>
+            <option value="Pacific/Auckland">Pacific/Auckland</option>
+          </select>
+        </label>
       </section>
 
       <section class="card">

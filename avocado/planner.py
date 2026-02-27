@@ -3,32 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from avocado.models import EventRecord
-
-
-SYSTEM_PROMPT = """You are Avocado, an AI schedule planner.
-You must respect constraints and only return JSON in this schema:
-{
-  "changes": [
-    {
-      "calendar_id": "string",
-      "uid": "string",
-      "start": "ISO8601 datetime",
-      "end": "ISO8601 datetime",
-      "summary": "string",
-      "location": "string",
-      "description": "string",
-      "reason": "string"
-    }
-  ]
-}
-
-Rules:
-1. Never modify events that are locked=true or mandatory=true.
-2. Only edit fields: start, end, summary, location, description.
-3. Preserve user intent from [AI Task] block.
-4. Keep output deterministic and concise.
-"""
+from avocado.models import DEFAULT_AI_SYSTEM_PROMPT, EventRecord
 
 
 def build_planning_payload(
@@ -50,9 +25,10 @@ def build_planning_payload(
     }
 
 
-def build_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
+def build_messages(payload: dict[str, Any], system_prompt: str | None = None) -> list[dict[str, str]]:
+    prompt = (system_prompt or "").strip() or DEFAULT_AI_SYSTEM_PROMPT
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": prompt},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 

@@ -67,3 +67,30 @@ class OpenAICompatibleClient:
             result["changes"] = []
         return result
 
+    def test_connectivity(self) -> tuple[bool, str]:
+        if not self.is_configured():
+            return False, "AI config incomplete: base_url/api_key/model required."
+        try:
+            response = requests.post(
+                self._chat_endpoint(),
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.config.model,
+                    "messages": [{"role": "user", "content": "Reply with: OK"}],
+                    "temperature": 0,
+                    "max_tokens": 8,
+                },
+                timeout=self.config.timeout_seconds,
+            )
+            if not response.ok:
+                return False, f"HTTP {response.status_code}: {response.text[:300]}"
+            payload = response.json()
+            content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content_text = str(content).strip().replace("\n", " ")
+            return True, f"Connected. Model response: {content_text[:120]}"
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+
