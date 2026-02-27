@@ -98,10 +98,26 @@ class CalendarRulesConfig:
     immutable_calendar_ids: list[str] = field(default_factory=list)
     staging_calendar_id: str = ""
     staging_calendar_name: str = "Avocado AI Staging"
+    per_calendar_defaults: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "CalendarRulesConfig":
         data = data or {}
+        raw_defaults = data.get("per_calendar_defaults", {})
+        normalized_defaults: dict[str, dict[str, Any]] = {}
+        if isinstance(raw_defaults, dict):
+            for key, value in raw_defaults.items():
+                calendar_id = str(key).strip()
+                if not calendar_id or not isinstance(value, dict):
+                    continue
+                mode = str(value.get("mode", "editable")).strip().lower()
+                if mode not in {"editable", "immutable"}:
+                    mode = "editable"
+                normalized_defaults[calendar_id] = {
+                    "mode": mode,
+                    "locked": bool(value.get("locked", False)),
+                    "mandatory": bool(value.get("mandatory", False)),
+                }
         return cls(
             immutable_keywords=[str(x).strip() for x in data.get("immutable_keywords", []) if str(x).strip()],
             immutable_calendar_ids=[
@@ -110,6 +126,7 @@ class CalendarRulesConfig:
             staging_calendar_id=str(data.get("staging_calendar_id", "")).strip(),
             staging_calendar_name=str(data.get("staging_calendar_name", "Avocado AI Staging")).strip()
             or "Avocado AI Staging",
+            per_calendar_defaults=normalized_defaults,
         )
 
 
@@ -251,4 +268,3 @@ def planning_window(now: datetime, window_days: int) -> tuple[datetime, datetime
     end_date = start.date() + timedelta(days=max(1, window_days) - 1)
     end = datetime.combine(end_date, time.max, tzinfo=now_utc.tzinfo)
     return start, end
-

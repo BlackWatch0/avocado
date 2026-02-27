@@ -8,7 +8,13 @@ from typing import Any
 from avocado.ai_client import OpenAICompatibleClient
 from avocado.caldav_client import CalDAVService
 from avocado.config_manager import ConfigManager
-from avocado.models import EventRecord, SyncResult, planning_window, serialize_datetime
+from avocado.models import (
+    EventRecord,
+    SyncResult,
+    TaskDefaultsConfig,
+    planning_window,
+    serialize_datetime,
+)
 from avocado.planner import build_messages, build_planning_payload, normalize_changes
 from avocado.reconciler import apply_change
 from avocado.state_store import StateStore
@@ -78,7 +84,22 @@ class SyncEngine:
             suggested_immutable = caldav_service.suggest_immutable_calendar_ids(
                 calendars, config.calendar_rules.immutable_keywords
             )
-            immutable_calendar_ids = set(config.calendar_rules.immutable_calendar_ids) | suggested_immutable
+            per_calendar_defaults = config.calendar_rules.per_calendar_defaults
+            immutable_from_defaults = {
+                cid
+                for cid, behavior in per_calendar_defaults.items()
+                if str(behavior.get("mode", "editable")).lower() == "immutable"
+            }
+            editable_override = {
+                cid
+                for cid, behavior in per_calendar_defaults.items()
+                if str(behavior.get("mode", "editable")).lower() == "editable"
+            }
+            immutable_calendar_ids = (
+                set(config.calendar_rules.immutable_calendar_ids)
+                | suggested_immutable
+                | immutable_from_defaults
+            ) - editable_override
 
             staging_info = caldav_service.ensure_staging_calendar(
                 config.calendar_rules.staging_calendar_id,
@@ -111,9 +132,15 @@ class SyncEngine:
                         event.locked = True
                         event.mandatory = True
                     else:
+                        behavior = per_calendar_defaults.get(calendar.calendar_id, {})
+                        task_defaults = TaskDefaultsConfig(
+                            locked=bool(behavior.get("locked", config.task_defaults.locked)),
+                            mandatory=bool(behavior.get("mandatory", config.task_defaults.mandatory)),
+                            editable_fields=list(config.task_defaults.editable_fields),
+                        )
                         new_description, task_payload, changed = ensure_ai_task_block(
                             event.description,
-                            config.task_defaults,
+                            task_defaults,
                         )
                         event.description = new_description
                         event.locked = bool(task_payload.get("locked", False))

@@ -113,6 +113,11 @@ Default Docker admin URL:
 Admin page behavior:
 - secrets are masked by default
 - leave `CalDAV password` or `AI API key` empty to keep existing values
+- click `Run Sync` then calendar list is refreshed from CalDAV
+- per-calendar default behavior can be configured in UI:
+  - immutable/editable
+  - default locked
+  - default mandatory
 
 ## Test
 

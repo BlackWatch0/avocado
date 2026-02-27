@@ -12,6 +12,7 @@
       <h1>Avocado Admin</h1>
       <div class="actions">
         <button id="sync-btn" type="button">Run Sync</button>
+        <button id="refresh-calendars-btn" type="button">Refresh Calendars</button>
         <button id="save-btn" type="button">Save Config</button>
       </div>
     </header>
@@ -44,7 +45,7 @@
       <section class="card">
         <h2>Calendar Rules</h2>
         <label>Immutable Keywords (comma separated)<input id="rules-immutable-keywords" type="text"></label>
-        <label>Immutable Calendar IDs (one per line)<textarea id="rules-immutable-calendar-ids" rows="4"></textarea></label>
+        <label>Immutable Calendar IDs (auto-filled from calendar table)<textarea id="rules-immutable-calendar-ids" rows="4" readonly></textarea></label>
         <label>Staging Calendar ID<input id="rules-staging-calendar-id" type="text"></label>
         <label>Staging Calendar Name<input id="rules-staging-calendar-name" type="text"></label>
       </section>
@@ -55,10 +56,27 @@
         <label class="checkbox"><input id="task-mandatory" type="checkbox"> Mandatory</label>
         <label>Editable Fields (comma separated)<input id="task-editable-fields" type="text"></label>
       </section>
+
+      <section class="card wide">
+        <h2>Calendars (from CalDAV)</h2>
+        <p class="muted">Click Sync or Refresh Calendars to load latest list from server.</p>
+        <div class="table-wrap">
+          <table id="calendar-behaviors-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Immutable</th>
+                <th>Default Locked</th>
+                <th>Default Mandatory</th>
+              </tr>
+            </thead>
+            <tbody id="calendar-behaviors-body"></tbody>
+          </table>
+        </div>
+      </section>
     </form>
   </main>
 
   <script src="/static/admin.js"></script>
 </body>
 </html>
-

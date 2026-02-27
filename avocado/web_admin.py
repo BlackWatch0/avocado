@@ -25,6 +25,7 @@ class CalendarRulesUpdateRequest(BaseModel):
     immutable_calendar_ids: list[str] = Field(default_factory=list)
     staging_calendar_id: str = ""
     staging_calendar_name: str | None = None
+    per_calendar_defaults: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class AppContext:
@@ -139,11 +140,30 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         output = []
+        per_calendar_defaults = config.calendar_rules.per_calendar_defaults
+        immutable_explicit = set(config.calendar_rules.immutable_calendar_ids)
+        editable_override = {
+            cid
+            for cid, behavior_entry in per_calendar_defaults.items()
+            if str(behavior_entry.get("mode", "editable")).lower() == "editable"
+        }
         for cal in calendars:
             item = cal.to_dict()
+            behavior = per_calendar_defaults.get(cal.calendar_id, {})
+            mode = str(behavior.get("mode", "editable")).lower()
+            if mode not in {"editable", "immutable"}:
+                mode = "editable"
+
+            immutable_selected = cal.calendar_id in immutable_explicit or mode == "immutable"
+            if mode == "editable":
+                immutable_selected = cal.calendar_id in immutable_explicit and cal.calendar_id not in editable_override
+
             item["immutable_suggested"] = cal.calendar_id in suggested
-            item["immutable_selected"] = cal.calendar_id in set(config.calendar_rules.immutable_calendar_ids)
+            item["immutable_selected"] = immutable_selected
             item["is_staging"] = cal.calendar_id == config.calendar_rules.staging_calendar_id
+            item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
+            item["default_mandatory"] = bool(behavior.get("mandatory", config.task_defaults.mandatory))
+            item["mode"] = "immutable" if immutable_selected else "editable"
             output.append(item)
         return {"calendars": output}
 
@@ -154,6 +174,7 @@ def create_app() -> FastAPI:
                 "immutable_keywords": request.immutable_keywords,
                 "immutable_calendar_ids": request.immutable_calendar_ids,
                 "staging_calendar_id": request.staging_calendar_id,
+                "per_calendar_defaults": request.per_calendar_defaults,
             }
         }
         if request.staging_calendar_name is not None:

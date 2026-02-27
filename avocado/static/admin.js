@@ -1,6 +1,8 @@
-const statusEl = document.getElementById("status");
+﻿const statusEl = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
 const syncBtn = document.getElementById("sync-btn");
+const refreshCalendarsBtn = document.getElementById("refresh-calendars-btn");
+const calendarBody = document.getElementById("calendar-behaviors-body");
 
 const setStatus = (type, message) => {
   statusEl.className = `status ${type}`;
@@ -13,11 +15,8 @@ const splitByComma = (text) =>
     .split(",")
     .map((v) => v.trim())
     .filter(Boolean);
-const splitLines = (text) =>
-  (text || "")
-    .split(/\r?\n/)
-    .map((v) => v.trim())
-    .filter(Boolean);
+
+let latestCalendars = [];
 
 const bindConfig = (cfg) => {
   document.getElementById("caldav-base-url").value = cfg.caldav?.base_url || "";
@@ -51,6 +50,81 @@ const bindConfig = (cfg) => {
   );
 };
 
+const syncImmutableIdsTextarea = () => {
+  const ids = [];
+  const rows = calendarBody.querySelectorAll("tr[data-calendar-id]");
+  rows.forEach((row) => {
+    const immutableCheckbox = row.querySelector("input[data-role='immutable']");
+    if (immutableCheckbox?.checked) {
+      ids.push(row.dataset.calendarId);
+    }
+  });
+  document.getElementById("rules-immutable-calendar-ids").value = ids.join("\n");
+};
+
+const renderCalendars = (calendars) => {
+  latestCalendars = calendars || [];
+  calendarBody.innerHTML = "";
+
+  if (!latestCalendars.length) {
+    const row = document.createElement("tr");
+    row.innerHTML = "<td colspan='4'>No calendars loaded.</td>";
+    calendarBody.appendChild(row);
+    syncImmutableIdsTextarea();
+    return;
+  }
+
+  latestCalendars.forEach((cal) => {
+    const row = document.createElement("tr");
+    row.dataset.calendarId = cal.calendar_id;
+
+    const immutableChecked = !!cal.immutable_selected;
+    const lockedChecked = !!cal.default_locked;
+    const mandatoryChecked = !!cal.default_mandatory;
+
+    row.innerHTML = `
+      <td>
+        <div><strong>${cal.name || "(Unnamed)"}</strong></div>
+        <div class="muted">${cal.calendar_id}${cal.is_staging ? " (staging)" : ""}</div>
+      </td>
+      <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""}></td>
+      <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""}></td>
+      <td><input type="checkbox" data-role="mandatory" ${mandatoryChecked ? "checked" : ""}></td>
+    `;
+
+    const immutableInput = row.querySelector("input[data-role='immutable']");
+    immutableInput?.addEventListener("change", () => syncImmutableIdsTextarea());
+
+    calendarBody.appendChild(row);
+  });
+
+  syncImmutableIdsTextarea();
+};
+
+const readCalendarBehavior = () => {
+  const immutableCalendarIds = [];
+  const perCalendarDefaults = {};
+
+  const rows = calendarBody.querySelectorAll("tr[data-calendar-id]");
+  rows.forEach((row) => {
+    const calendarId = row.dataset.calendarId;
+    if (!calendarId) return;
+
+    const immutable = !!row.querySelector("input[data-role='immutable']")?.checked;
+    const locked = !!row.querySelector("input[data-role='locked']")?.checked;
+    const mandatory = !!row.querySelector("input[data-role='mandatory']")?.checked;
+
+    if (immutable) immutableCalendarIds.push(calendarId);
+    perCalendarDefaults[calendarId] = {
+      mode: immutable ? "immutable" : "editable",
+      locked,
+      mandatory,
+    };
+  });
+
+  return { immutableCalendarIds, perCalendarDefaults };
+};
+
 const readPayload = () => {
   const windowDays = Number(document.getElementById("sync-window-days").value || "0");
   const intervalSeconds = Number(document.getElementById("sync-interval-seconds").value || "0");
@@ -58,6 +132,8 @@ const readPayload = () => {
   if (windowDays < 1) throw new Error("window_days must be >= 1");
   if (intervalSeconds < 30) throw new Error("interval_seconds must be >= 30");
   if (timeoutSeconds < 1) throw new Error("timeout_seconds must be >= 1");
+
+  const { immutableCalendarIds, perCalendarDefaults } = readCalendarBehavior();
 
   return {
     caldav: {
@@ -78,9 +154,10 @@ const readPayload = () => {
     },
     calendar_rules: {
       immutable_keywords: splitByComma(document.getElementById("rules-immutable-keywords").value),
-      immutable_calendar_ids: splitLines(document.getElementById("rules-immutable-calendar-ids").value),
+      immutable_calendar_ids: immutableCalendarIds,
       staging_calendar_id: document.getElementById("rules-staging-calendar-id").value.trim(),
       staging_calendar_name: document.getElementById("rules-staging-calendar-name").value.trim(),
+      per_calendar_defaults: perCalendarDefaults,
     },
     task_defaults: {
       locked: document.getElementById("task-locked").checked,
@@ -103,6 +180,16 @@ const loadConfig = async () => {
   setStatus("success", "Config loaded.");
 };
 
+const loadCalendars = async () => {
+  const res = await fetch("/api/calendars");
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load calendars: ${res.status} ${errorText}`);
+  }
+  const data = await res.json();
+  renderCalendars(data.calendars || []);
+};
+
 const saveConfig = async () => {
   withPending(saveBtn, true);
   try {
@@ -118,6 +205,7 @@ const saveConfig = async () => {
       throw new Error(`Save failed: ${res.status} ${errorText}`);
     }
     await loadConfig();
+    await loadCalendars();
     setStatus("success", "Config saved.");
   } catch (err) {
     setStatus("error", err.message || "Save failed");
@@ -135,7 +223,8 @@ const runSync = async () => {
       const errorText = await res.text();
       throw new Error(`Sync trigger failed: ${res.status} ${errorText}`);
     }
-    setStatus("success", "Sync triggered.");
+    await loadCalendars();
+    setStatus("success", "Sync triggered and calendars refreshed.");
   } catch (err) {
     setStatus("error", err.message || "Sync trigger failed");
   } finally {
@@ -143,7 +232,28 @@ const runSync = async () => {
   }
 };
 
+const refreshCalendars = async () => {
+  withPending(refreshCalendarsBtn, true);
+  try {
+    setStatus("info", "Refreshing calendars...");
+    await loadCalendars();
+    setStatus("success", "Calendars refreshed.");
+  } catch (err) {
+    setStatus("error", err.message || "Refresh calendars failed");
+  } finally {
+    withPending(refreshCalendarsBtn, false);
+  }
+};
+
 saveBtn.addEventListener("click", saveConfig);
 syncBtn.addEventListener("click", runSync);
-loadConfig().catch((err) => setStatus("error", err.message || "Failed to initialize"));
+refreshCalendarsBtn.addEventListener("click", refreshCalendars);
 
+(async () => {
+  try {
+    await loadConfig();
+    await loadCalendars();
+  } catch (err) {
+    setStatus("error", err.message || "Failed to initialize");
+  }
+})();

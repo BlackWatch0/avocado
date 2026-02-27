@@ -79,7 +79,22 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(config["sync"]["interval_seconds"], 600)
         self.assertEqual(config["sync"]["window_days"], 7)
 
+    def test_put_config_per_calendar_defaults_persist(self) -> None:
+        update = {
+            "calendar_rules": {
+                "per_calendar_defaults": {
+                    "cal-1": {"mode": "immutable", "locked": True, "mandatory": True},
+                    "cal-2": {"mode": "editable", "locked": False, "mandatory": True},
+                }
+            }
+        }
+        resp = self.client.put("/api/config", json={"payload": update})
+        self.assertEqual(resp.status_code, 200)
+        rules = resp.json()["config"]["calendar_rules"]
+        self.assertIn("cal-1", rules["per_calendar_defaults"])
+        self.assertEqual(rules["per_calendar_defaults"]["cal-1"]["mode"], "immutable")
+        self.assertTrue(rules["per_calendar_defaults"]["cal-1"]["locked"])
+
 
 if __name__ == "__main__":
     unittest.main()
-
