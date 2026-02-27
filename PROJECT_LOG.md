@@ -55,6 +55,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 新增无登录管理页面与配置编辑能力 | `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.css`, `avocado/static/admin.js`, `tests/test_web_admin.py`, `README.md` | 新增根路径管理页面（`/`）、新增 `GET /api/config/raw`、增强 `PUT /api/config` 密钥保留逻辑（空值或 `***` 不覆盖），支持页面保存配置与手动触发同步 | 风险中等；若页面交互异常可继续通过现有 API 运维，回滚可移除前端路由与静态资源 | AVO-012 |
 | 2026-02-27 | 完善 README 与 Docker 部署说明 | `README.md`, `docker-compose.yml` | 重写 README 部署文档并补充完整 Docker 运维流程；将后台管理端口映射改为可配置 `${AVOCADO_ADMIN_PORT:-18080}`，新增容器健康检查 | 风险低；若需回滚可恢复上一个 README 与 compose 版本 | AVO-011 |
 | 2026-02-27 | 落地 Avocado v1 MVP 代码骨架 | `avocado/*`, `tests/*`, `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `config.example.yaml`, `README.md` | 新增配置管理、CalDAV 客户端、AI 客户端、同步引擎、冲突处理、SQLite 状态库、调度器、Web API、基础单元测试与容器化 | 主要风险为不同 CalDAV 供应商兼容性差异；可回滚到上一提交并保留文档基线 | AVO-002, AVO-003, AVO-004, AVO-005, AVO-006, AVO-007 |
 | 2026-02-27 | 建立项目长期文档治理基线 | `PROJECT_LOG.md`, `README.md` | 新增唯一事实源文档、模板、TODO 看板与维护规则；README 增加文档入口 | 风险低；如需回滚可删除 `PROJECT_LOG.md` 并恢复 README 链接 | AVO-001 |
@@ -75,6 +76,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-012 | 无登录管理页面（展示并修改 config） | Done | 根路径可访问管理页；可展示全部配置；保存配置与手动同步可用；密钥留空不覆盖 | P1 | AVO-007 | 2026-02-27 |
 | AVO-011 | 完善 README 与 Docker 部署文档 | Done | README 包含完整 Docker 部署/运维流程，compose 明确后台管理端口映射并可配置 | P1 | AVO-007 | 2026-02-27 |
 | AVO-007 | 内网 Web 后台（配置、状态、手动同步） | Done | 提供配置读取/更新、规则更新、同步触发、状态与审计查询接口 | P1 | AVO-002, AVO-005 | 2026-02-27 |
 | AVO-006 | 接入 OpenAI 兼容接口并完成 AI 结果回写 | Done | 可从配置读取 `base_url/api_key/model` 并生成变更集回写 | P0 | AVO-005 | 2026-02-27 |

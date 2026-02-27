@@ -1,0 +1,149 @@
+const statusEl = document.getElementById("status");
+const saveBtn = document.getElementById("save-btn");
+const syncBtn = document.getElementById("sync-btn");
+
+const setStatus = (type, message) => {
+  statusEl.className = `status ${type}`;
+  statusEl.textContent = message;
+};
+
+const joinList = (items) => (items || []).join(", ");
+const splitByComma = (text) =>
+  (text || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+const splitLines = (text) =>
+  (text || "")
+    .split(/\r?\n/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+const bindConfig = (cfg) => {
+  document.getElementById("caldav-base-url").value = cfg.caldav?.base_url || "";
+  document.getElementById("caldav-username").value = cfg.caldav?.username || "";
+  document.getElementById("caldav-password").value = "";
+
+  document.getElementById("ai-base-url").value = cfg.ai?.base_url || "";
+  document.getElementById("ai-api-key").value = "";
+  document.getElementById("ai-model").value = cfg.ai?.model || "";
+  document.getElementById("ai-timeout-seconds").value = cfg.ai?.timeout_seconds ?? 90;
+
+  document.getElementById("sync-window-days").value = cfg.sync?.window_days ?? 7;
+  document.getElementById("sync-interval-seconds").value = cfg.sync?.interval_seconds ?? 300;
+  document.getElementById("sync-timezone").value = cfg.sync?.timezone || "UTC";
+
+  document.getElementById("rules-immutable-keywords").value = joinList(
+    cfg.calendar_rules?.immutable_keywords || []
+  );
+  document.getElementById("rules-immutable-calendar-ids").value = (
+    cfg.calendar_rules?.immutable_calendar_ids || []
+  ).join("\n");
+  document.getElementById("rules-staging-calendar-id").value =
+    cfg.calendar_rules?.staging_calendar_id || "";
+  document.getElementById("rules-staging-calendar-name").value =
+    cfg.calendar_rules?.staging_calendar_name || "";
+
+  document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
+  document.getElementById("task-mandatory").checked = !!cfg.task_defaults?.mandatory;
+  document.getElementById("task-editable-fields").value = joinList(
+    cfg.task_defaults?.editable_fields || []
+  );
+};
+
+const readPayload = () => {
+  const windowDays = Number(document.getElementById("sync-window-days").value || "0");
+  const intervalSeconds = Number(document.getElementById("sync-interval-seconds").value || "0");
+  const timeoutSeconds = Number(document.getElementById("ai-timeout-seconds").value || "0");
+  if (windowDays < 1) throw new Error("window_days must be >= 1");
+  if (intervalSeconds < 30) throw new Error("interval_seconds must be >= 30");
+  if (timeoutSeconds < 1) throw new Error("timeout_seconds must be >= 1");
+
+  return {
+    caldav: {
+      base_url: document.getElementById("caldav-base-url").value.trim(),
+      username: document.getElementById("caldav-username").value.trim(),
+      password: document.getElementById("caldav-password").value,
+    },
+    ai: {
+      base_url: document.getElementById("ai-base-url").value.trim(),
+      api_key: document.getElementById("ai-api-key").value,
+      model: document.getElementById("ai-model").value.trim(),
+      timeout_seconds: timeoutSeconds,
+    },
+    sync: {
+      window_days: windowDays,
+      interval_seconds: intervalSeconds,
+      timezone: document.getElementById("sync-timezone").value.trim(),
+    },
+    calendar_rules: {
+      immutable_keywords: splitByComma(document.getElementById("rules-immutable-keywords").value),
+      immutable_calendar_ids: splitLines(document.getElementById("rules-immutable-calendar-ids").value),
+      staging_calendar_id: document.getElementById("rules-staging-calendar-id").value.trim(),
+      staging_calendar_name: document.getElementById("rules-staging-calendar-name").value.trim(),
+    },
+    task_defaults: {
+      locked: document.getElementById("task-locked").checked,
+      mandatory: document.getElementById("task-mandatory").checked,
+      editable_fields: splitByComma(document.getElementById("task-editable-fields").value),
+    },
+  };
+};
+
+const withPending = (btn, pending) => {
+  btn.disabled = pending;
+};
+
+const loadConfig = async () => {
+  setStatus("info", "Loading config...");
+  const res = await fetch("/api/config/raw");
+  if (!res.ok) throw new Error(`Failed to load config: ${res.status}`);
+  const data = await res.json();
+  bindConfig(data.config || {});
+  setStatus("success", "Config loaded.");
+};
+
+const saveConfig = async () => {
+  withPending(saveBtn, true);
+  try {
+    const payload = readPayload();
+    setStatus("info", "Saving config...");
+    const res = await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload }),
+    });
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Save failed: ${res.status} ${errorText}`);
+    }
+    await loadConfig();
+    setStatus("success", "Config saved.");
+  } catch (err) {
+    setStatus("error", err.message || "Save failed");
+  } finally {
+    withPending(saveBtn, false);
+  }
+};
+
+const runSync = async () => {
+  withPending(syncBtn, true);
+  try {
+    setStatus("info", "Triggering sync...");
+    const res = await fetch("/api/sync/run", { method: "POST" });
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Sync trigger failed: ${res.status} ${errorText}`);
+    }
+    setStatus("success", "Sync triggered.");
+  } catch (err) {
+    setStatus("error", err.message || "Sync trigger failed");
+  } finally {
+    withPending(syncBtn, false);
+  }
+};
+
+saveBtn.addEventListener("click", saveConfig);
+syncBtn.addEventListener("click", runSync);
+loadConfig().catch((err) => setStatus("error", err.message || "Failed to initialize"));
+
