@@ -42,6 +42,18 @@ class ReconcilerTests(unittest.TestCase):
         self.assertTrue(outcome.conflicted)
         self.assertEqual(outcome.reason, "user_modified_after_planning")
 
+    def test_conflict_when_datetime_invalid(self) -> None:
+        event = EventRecord(calendar_id="cal-1", uid="uid-1", etag="etag-a")
+        outcome = apply_change(
+            current_event=event,
+            change={"start": "not-a-datetime", "summary": "New"},
+            baseline_etag="etag-a",
+        )
+        self.assertFalse(outcome.applied)
+        self.assertTrue(outcome.conflicted)
+        self.assertEqual(outcome.reason, "invalid_datetime")
+        self.assertEqual(outcome.event.summary, "")
+
     def test_conflict_when_locked(self) -> None:
         event = EventRecord(calendar_id="cal-1", uid="uid-1", locked=True, etag="etag-a")
         outcome = apply_change(
