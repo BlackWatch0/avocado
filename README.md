@@ -111,6 +111,7 @@ Recommendation:
 - `GET /api/ai/changes`
 - `POST /api/ai/changes/undo`
 - `POST /api/ai/changes/revise`
+- `GET /api/metrics/ai-request-bytes`
 
 Default Docker admin URL:
 - `http://127.0.0.1:18080`
@@ -130,7 +131,8 @@ Admin page behavior:
   - default locked
   - default mandatory
 - AI Base URL defaults to `https://api.openai.com/v1`
-- AI connectivity test is available as a blue inline link directly below AI Base URL
+- API connectivity test is available as a blue inline link directly below AI Base URL
+- after connectivity test, available models are loaded into Model dropdown
 - AI system prompt can be edited directly in admin page
 - timezone uses dropdown selection (with custom fallback option when needed)
 - admin page supports English/Chinese UI:
@@ -139,6 +141,7 @@ Admin page behavior:
 - `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
 - logs page includes an AI request-bytes line chart (derived from audit action `ai_request`)
+- AI request-bytes chart auto refreshes every 30s and supports custom retention days (default 90)
 - admin page supports one-click custom time-range sync (start/end datetime)
 
 ## Test

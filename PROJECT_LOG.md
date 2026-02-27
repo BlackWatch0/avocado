@@ -59,6 +59,11 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 修复 user_intent 跨层未生效：源日历意图自动同步到用户层 | `avocado/sync_engine.py`, `tests/test_sync_engine_helpers.py` | 当用户在 `personal/intake` 等非 stage 源日历更新 `user_intent` 时，系统会同步到对应 user-layer 事件并触发重排；减少 `ai_change_skipped_no_intent` 误跳过 | 风险低；仅增强意图同步，不改变既有锁定/冲突策略 | AVO-031 |
+| 2026-02-27 | AI 修改条目默认精简展示 | `avocado/web_admin.py`, `avocado/static/admin.js` | AI 修改条目列表默认 `limit` 下调为 15（前后端一致），避免日志页一次性列出过多条目导致页面过长 | 风险低；仅默认展示数量调整，不影响历史数据存储与接口兼容 | AVO-030 |
+| 2026-02-27 | 修复 AI 修改记录空白展示（旧审计兼容回退） | `avocado/web_admin.py`, `avocado/sync_engine.py`, `avocado/static/admin.js`, `tests/test_web_admin.py` | `GET /api/ai/changes` 对旧审计记录增加回退：标题回退到 UID、时间尝试从 patch/当前事件补全、原因缺失时给出可读提示；过滤“无实际字段变化”的记录；同步侧新增 `ai_change_skipped_no_effect`，避免写入空变更记录 | 风险低；仅展示层与审计记录过滤增强，不影响同步主流程 | AVO-029 |
+| 2026-02-27 | API 连通性测试支持模型列表下拉 | `avocado/ai_client.py`, `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `tests/test_web_admin.py`, `README.md` | 点击“测试 API 连通性”后返回可用 `models` 列表并填充 `Model` 下拉框；测试文案去掉“AI”字样 | 风险低；若供应商不支持 `/models` 接口则列表为空，仍可保留当前模型值 | AVO-026 |
+| 2026-02-27 | AI 请求字节图增强：自动刷新 + 90天默认保留 + 自定义范围 | `avocado/state_store.py`, `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css`, `tests/test_web_admin.py`, `README.md` | 新增 `GET /api/metrics/ai-request-bytes` 专用指标接口；图表从审计独立查询并默认展示近 90 天，可自定义天数；前端每 30 秒自动刷新，失败时使用本地缓存兜底显示 | 风险低；仅新增查询与前端展示逻辑，不影响同步主流程 | AVO-025 |
 | 2026-02-27 | 管理页新增 AI 修改条目列表与三点操作菜单 | `avocado/sync_engine.py`, `avocado/state_store.py`, `avocado/caldav_client.py`, `avocado/task_block.py`, `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css`, `tests/test_web_admin.py`, `README.md` | 新增 `GET /api/ai/changes` 列表，展示标题/时间/变更内容/原因；每条支持三点菜单执行“撤销本次 AI 修改”和“按提示要求再改”，并触发下一轮同步 | 风险中等；撤销依赖审计快照完整性，历史旧记录缺少快照时无法撤销 | AVO-024 |
 | 2026-02-27 | 日志页新增 AI 请求字节数折线图 | `avocado/sync_engine.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css`, `README.md` | 同步时新增 `ai_request` 审计事件并记录 `request_bytes`；管理页日志标签增加折线图，展示最近 AI 请求字节数趋势 | 风险低；仅新增审计记录与前端可视化，不影响同步主流程 | AVO-023 |
 | 2026-02-27 | 三日历流转与自定义时间段同步 | `avocado/models.py`, `avocado/sync_engine.py`, `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `config.example.yaml`, `tests/test_web_admin.py`, `tests/test_models.py`, `README.md` | 新增 `intake`（新日程）日历并自动确保存在；`intake` 事件在同步时导入 `user-layer` 后从 `intake` 删除；新增 `POST /api/sync/run-window` 和管理页“一键自定义时间段同步” | 风险中等；若 intake 删除失败可能保留源事件，但导入 UID 命名空间可避免用户层重复 | AVO-022 |
@@ -83,6 +88,8 @@
 | AVO-008 | 真实 CalDAV 端到端兼容验证（Nextcloud/iCloud） | Todo | 在至少 2 种服务器上完成拉取、写回、冲突场景验证并记录差异 | P0 | AVO-005, AVO-006 | 2026-02-27 |
 | AVO-009 | 后台安全加固（登录认证/反向代理建议） | Todo | 提供最小认证机制或明确反向代理鉴权指南并可配置开关 | P1 | AVO-007 | 2026-02-27 |
 | AVO-010 | CI 基线（lint + unittest + docker build） | Todo | push/pull request 时自动执行基础质量校验 | P1 | AVO-002 | 2026-02-27 |
+| AVO-027 | AI 记忆与关键词学习（跨日程持续优化） | Todo | 系统可从历史日程中提炼关键词/偏好并形成可复用记忆，在新一轮排程时纳入提示词和约束，且支持查看与清理记忆 | P1 | AVO-015, AVO-024 | 2026-02-27 |
+| AVO-028 | 新建日程初始化指令（如 `/i`） | Todo | 用户创建新日程时可通过指令触发 AI 初始化，自动补全时间、时长、位置等字段，并结合历史记忆与规则生成可编辑结果 | P1 | AVO-022, AVO-027 | 2026-02-27 |
 
 ### In Progress
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
@@ -92,6 +99,11 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-031 | 源日历 user_intent 自动同步到 user-layer | Done | 在非 stage 日历修改 `user_intent` 后下一轮同步会将意图写入 user-layer 对应事件，并参与 AI 重排，不再被 `no_intent` 跳过 | P0 | AVO-022, AVO-020 | 2026-02-27 |
+| AVO-030 | AI 修改条目默认展示数量精简 | Done | AI 修改条目默认展示最近 15 条，页面不再一次性铺满全部历史记录 | P2 | AVO-024 | 2026-02-27 |
+| AVO-029 | AI 修改记录旧审计兼容回退展示 | Done | 历史记录缺少标题/时间/原因时仍可显示 UID、可读原因与身份信息，不再出现整页 `(Untitled)` 和 `- -> -` | P1 | AVO-024 | 2026-02-27 |
+| AVO-026 | API 连通性测试回填模型下拉 | Done | 连通性测试后可加载并显示可用模型下拉列表；按钮文案改为“测试 API 连通性” | P1 | AVO-014 | 2026-02-27 |
+| AVO-025 | AI 请求字节图三个月保留与自动刷新 | Done | 图表默认展示近 90 天数据并支持自定义天数；每 30 秒自动刷新；接口异常时可回退本地缓存显示 | P1 | AVO-023 | 2026-02-27 |
 | AVO-024 | AI 修改条目可观测与可操作化（撤销/按提示重改） | Done | 管理页可列出 AI 修改条目（标题、时间、改动、原因）；每条支持撤销与提示词重改，并触发同步 | P0 | AVO-023 | 2026-02-27 |
 | AVO-023 | 日志页 AI 请求字节趋势可视化 | Done | 同步时记录 `ai_request.request_bytes`；管理页日志可显示最近请求字节数折线图 | P1 | AVO-021 | 2026-02-27 |
 | AVO-022 | 三日历管理与自定义时间段同步 | Done | 新增 intake 日历并在每轮同步导入到 user-layer 后删除；管理页可提交 start/end 触发自定义窗口同步 | P0 | AVO-016, AVO-020 | 2026-02-27 |

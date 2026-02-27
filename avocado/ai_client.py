@@ -39,6 +39,12 @@ class OpenAICompatibleClient:
             return base
         return f"{base}/chat/completions"
 
+    def _models_endpoint(self) -> str:
+        base = self.config.base_url.rstrip("/")
+        if base.endswith("/chat/completions"):
+            return f"{base[:-len('/chat/completions')]}/models"
+        return f"{base}/models"
+
     def generate_changes(self, *, messages: list[dict[str, str]]) -> dict[str, Any]:
         if not self.is_configured():
             return {"changes": []}
@@ -93,4 +99,36 @@ class OpenAICompatibleClient:
             return True, f"Connected. Model response: {content_text[:120]}"
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
+
+    def list_models(self) -> list[str]:
+        if not self.is_configured():
+            return []
+        try:
+            response = requests.get(
+                self._models_endpoint(),
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                },
+                timeout=self.config.timeout_seconds,
+            )
+            if not response.ok:
+                return []
+            payload = response.json()
+            raw_items = payload.get("data", []) if isinstance(payload, dict) else []
+            model_ids: list[str] = []
+            for item in raw_items:
+                model_id = str((item or {}).get("id", "")).strip()
+                if model_id:
+                    model_ids.append(model_id)
+            # keep stable order, remove duplicates
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for model_id in model_ids:
+                if model_id in seen:
+                    continue
+                seen.add(model_id)
+                deduped.append(model_id)
+            return deduped
+        except Exception:
+            return []
 

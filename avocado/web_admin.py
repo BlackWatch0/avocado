@@ -303,7 +303,8 @@ def create_app() -> FastAPI:
         config = app.state.context.config_manager.load()
         client = OpenAICompatibleClient(config.ai)
         ok, message = client.test_connectivity()
-        return {"ok": ok, "message": message}
+        models = client.list_models() if ok else []
+        return {"ok": ok, "message": message, "models": models}
 
     @app.get("/api/sync/status")
     def sync_status(limit: int = 20) -> dict[str, Any]:
@@ -313,34 +314,109 @@ def create_app() -> FastAPI:
     def audit_events(limit: int = 100) -> dict[str, Any]:
         return {"events": app.state.context.state_store.recent_audit_events(limit=limit)}
 
+    @app.get("/api/metrics/ai-request-bytes")
+    def ai_request_bytes(days: int = 90, limit: int = 5000) -> dict[str, Any]:
+        points = app.state.context.state_store.ai_request_bytes_series(days=days, limit=limit)
+        return {"points": points, "days": max(1, int(days))}
+
     @app.get("/api/ai/changes")
-    def ai_changes(limit: int = 50) -> dict[str, Any]:
+    def ai_changes(limit: int = 15) -> dict[str, Any]:
         events = app.state.context.state_store.recent_audit_events(limit=max(100, limit * 6))
         output: list[dict[str, Any]] = []
+        config = app.state.context.config_manager.load()
+        service: CalDAVService | None = None
         for event in events:
             if event.get("action") != "apply_ai_change":
                 continue
             details = event.get("details", {}) or {}
             before_event = details.get("before_event") or {}
             after_event = details.get("after_event") or {}
-            title = str(
+            patch = details.get("patch") or []
+
+            start_value = after_event.get("start") or details.get("start") or before_event.get("start") or ""
+            end_value = after_event.get("end") or details.get("end") or before_event.get("end") or ""
+            summary_value = (
                 after_event.get("summary")
                 or details.get("title")
                 or before_event.get("summary")
                 or ""
+            )
+            if isinstance(patch, list):
+                for item in patch:
+                    if not isinstance(item, dict):
+                        continue
+                    field = str(item.get("field", "")).strip()
+                    after_value = item.get("after")
+                    if field == "summary" and not summary_value:
+                        summary_value = str(after_value or "")
+                    elif field == "start" and not start_value:
+                        start_value = str(after_value or "")
+                    elif field == "end" and not end_value:
+                        end_value = str(after_value or "")
+
+            calendar_id = str(event.get("calendar_id", "") or "")
+            uid = str(event.get("uid", "") or "")
+            if (not summary_value or not start_value or not end_value) and calendar_id and uid:
+                try:
+                    if service is None:
+                        service = CalDAVService(config.caldav)
+                    current_event = service.get_event_by_uid(calendar_id, uid)
+                    if current_event is not None:
+                        if not summary_value:
+                            summary_value = current_event.summary
+                        if not start_value:
+                            start_value = current_event.to_dict().get("start", "")
+                        if not end_value:
+                            end_value = current_event.to_dict().get("end", "")
+                except Exception:
+                    # Do not fail the whole endpoint when CalDAV lookup is unavailable.
+                    pass
+
+            title = str(
+                summary_value
+                or ""
             ).strip()
+            if not title:
+                title = uid or f"event#{event.get('id')}"
+            reason_text = str(details.get("reason", "") or "").strip()
+            if not reason_text:
+                fields = details.get("fields") or []
+                if isinstance(fields, list) and fields:
+                    reason_text = f"AI adjusted fields: {', '.join(str(x) for x in fields)}"
+                else:
+                    reason_text = "Legacy record without reason"
+
+            effective_patch: list[dict[str, Any]] = []
+            if isinstance(patch, list):
+                for item in patch:
+                    if not isinstance(item, dict):
+                        continue
+                    before_val = str(item.get("before", "") or "")
+                    after_val = str(item.get("after", "") or "")
+                    if before_val == after_val:
+                        continue
+                    effective_patch.append(
+                        {
+                            "field": str(item.get("field", "") or ""),
+                            "before": before_val,
+                            "after": after_val,
+                        }
+                    )
+            if not effective_patch:
+                # Skip records that have no effective field changes.
+                continue
             output.append(
                 {
                     "audit_id": event.get("id"),
                     "created_at": event.get("created_at"),
-                    "calendar_id": event.get("calendar_id"),
-                    "uid": event.get("uid"),
+                    "calendar_id": calendar_id,
+                    "uid": uid,
                     "title": title,
-                    "start": after_event.get("start") or details.get("start") or before_event.get("start") or "",
-                    "end": after_event.get("end") or details.get("end") or before_event.get("end") or "",
-                    "reason": str(details.get("reason", "") or ""),
+                    "start": start_value,
+                    "end": end_value,
+                    "reason": reason_text,
                     "fields": details.get("fields") or [],
-                    "patch": details.get("patch") or [],
+                    "patch": effective_patch,
                 }
             )
             if len(output) >= max(1, limit):

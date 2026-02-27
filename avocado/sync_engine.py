@@ -20,7 +20,12 @@ from avocado.models import (
 from avocado.planner import build_messages, build_planning_payload, normalize_changes
 from avocado.reconciler import apply_change
 from avocado.state_store import StateStore
-from avocado.task_block import ensure_ai_task_block, parse_ai_task_block, set_ai_task_category
+from avocado.task_block import (
+    ensure_ai_task_block,
+    parse_ai_task_block,
+    set_ai_task_category,
+    set_ai_task_user_intent,
+)
 
 
 def _hash_text(value: str) -> str:
@@ -83,6 +88,24 @@ def _event_has_user_intent(event: EventRecord) -> bool:
     if value in {"", "\"\"", "''", "null", "None", "~"}:
         return False
     return True
+
+
+def _extract_user_intent(event: EventRecord) -> str:
+    parsed = parse_ai_task_block(event.description or "")
+    if isinstance(parsed, dict):
+        return str(parsed.get("user_intent", "")).strip()
+    description = event.description or ""
+    block_match = re.search(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", description, re.DOTALL)
+    if not block_match:
+        return ""
+    raw_block = block_match.group(1)
+    intent_match = re.search(r"^\s*user_intent\s*:\s*(.+)\s*$", raw_block, re.MULTILINE)
+    if not intent_match:
+        return ""
+    value = intent_match.group(1).strip()
+    if value in {"", "\"\"", "''", "null", "None", "~"}:
+        return ""
+    return value
 
 
 def _infer_category(event: EventRecord, change: dict[str, Any]) -> str:
@@ -619,6 +642,31 @@ class SyncEngine:
                                     raise
                                 user_map[user_uid] = seeded_user
                                 should_replan = True
+                            # Propagate user_intent edits from source calendars to mapped user-layer event.
+                            source_intent = _extract_user_intent(event)
+                            if seeded_user is not None and source_intent:
+                                target_intent = _extract_user_intent(seeded_user)
+                                if source_intent != target_intent:
+                                    new_description, _, intent_changed = set_ai_task_user_intent(
+                                        seeded_user.description,
+                                        config.task_defaults,
+                                        source_intent,
+                                    )
+                                    if intent_changed:
+                                        seeded_user.description = new_description
+                                        seeded_user = caldav_service.upsert_event(user_info.calendar_id, seeded_user)
+                                        user_map[user_uid] = seeded_user
+                                        should_replan = True
+                                        self.state_store.record_audit_event(
+                                            calendar_id=user_info.calendar_id,
+                                            uid=user_uid,
+                                            action="propagate_user_intent_from_source",
+                                            details={
+                                                "trigger": trigger,
+                                                "source_calendar_id": calendar.calendar_id,
+                                                "source_uid": event.uid,
+                                            },
+                                        )
 
                     all_events.append(event)
                     self.state_store.upsert_snapshot(
@@ -775,9 +823,20 @@ class SyncEngine:
                     saved_user_event.description = new_description
                     saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
                 patch_fields = _event_patch(before_event, saved_user_event)
+                if not patch_fields:
+                    self.state_store.record_audit_event(
+                        calendar_id=event.calendar_id,
+                        uid=event.uid,
+                        action="ai_change_skipped_no_effect",
+                        details={"trigger": trigger},
+                    )
+                    continue
                 mutable_events[key] = saved_user_event
                 baseline_etags[key] = saved_user_event.etag
                 changes_applied += 1
+                reason_text = str(change.get("reason", "")).strip()
+                if not reason_text:
+                    reason_text = f"AI adjusted fields: {', '.join(item['field'] for item in patch_fields)}"
                 self.state_store.record_audit_event(
                     calendar_id=event.calendar_id,
                     uid=event.uid,
@@ -785,7 +844,7 @@ class SyncEngine:
                     details={
                         "trigger": trigger,
                         "category": category,
-                        "reason": str(change.get("reason", "")).strip(),
+                        "reason": reason_text,
                         "title": saved_user_event.summary,
                         "start": serialize_datetime(saved_user_event.start),
                         "end": serialize_datetime(saved_user_event.end),

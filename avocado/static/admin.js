@@ -7,6 +7,8 @@ const aiTestLink = document.getElementById("ai-test-link");
 const refreshSyncLogsBtn = document.getElementById("refresh-sync-logs-btn");
 const refreshAuditLogsBtn = document.getElementById("refresh-audit-logs-btn");
 const refreshAiChangesBtn = document.getElementById("refresh-ai-changes-btn");
+const refreshAiBytesBtn = document.getElementById("refresh-ai-bytes-btn");
+const aiBytesDaysInput = document.getElementById("ai-bytes-days");
 const tabConfigBtn = document.getElementById("tab-config");
 const tabCalendarsBtn = document.getElementById("tab-calendars");
 const tabLogsBtn = document.getElementById("tab-logs");
@@ -19,6 +21,8 @@ const aiBytesChartCanvas = document.getElementById("ai-bytes-chart");
 const panelEls = [...document.querySelectorAll("[data-panel]")];
 
 const LANG_PREF_KEY = "avocado_admin_lang_pref";
+const AI_BYTES_DAYS_KEY = "avocado_ai_bytes_days";
+const AI_BYTES_CACHE_KEY = "avocado_ai_bytes_cache";
 
 const I18N = {
   en: {
@@ -37,6 +41,7 @@ const I18N = {
     "action.refresh_sync_logs": "Refresh Sync Logs",
     "action.refresh_audit_logs": "Refresh Audit Logs",
     "action.refresh_ai_changes": "Refresh AI Changes",
+    "action.refresh_ai_bytes": "Apply",
     "section.caldav": "CalDAV",
     "section.ai": "AI",
     "section.sync": "Sync",
@@ -71,8 +76,9 @@ const I18N = {
     "field.locked": "Locked",
     "field.mandatory": "Mandatory",
     "field.editable_fields": "Editable Fields (comma separated)",
+    "field.chart_days": "Retention Days",
     "placeholder.keep_secret": "Leave empty to keep current",
-    "ai.test_link": "Test AI API connectivity",
+    "ai.test_link": "Test API connectivity",
     "hint.refresh_calendars": "Click Sync or Refresh Calendars to load latest list from server.",
     "table.name": "Name",
     "table.immutable": "Immutable",
@@ -99,9 +105,9 @@ const I18N = {
     "status.calendars_refreshed": "Calendars refreshed.",
     "status.triggering_custom_sync": "Triggering custom range sync...",
     "status.custom_sync_triggered_refreshed": "Custom range sync completed and calendars/logs refreshed.",
-    "status.testing_ai": "Testing AI connectivity...",
-    "status.ai_ok": "AI connectivity OK. {message}",
-    "status.ai_failed": "AI connectivity failed. {message}",
+    "status.testing_ai": "Testing API connectivity...",
+    "status.ai_ok": "API connectivity OK. {message}",
+    "status.ai_failed": "API connectivity failed. {message}",
     "status.refreshing_sync_logs": "Refreshing sync logs...",
     "status.sync_logs_refreshed": "Sync logs refreshed.",
     "status.refreshing_audit_logs": "Refreshing audit logs...",
@@ -112,6 +118,8 @@ const I18N = {
     "status.ai_change_undone": "AI change has been undone.",
     "status.requesting_ai_revise": "Submitting AI revise request...",
     "status.ai_revise_requested": "AI revise request submitted and sync triggered.",
+    "status.refreshing_ai_bytes": "Refreshing AI request bytes chart...",
+    "status.ai_bytes_refreshed": "AI request bytes chart refreshed.",
     "status.initialization_failed": "Failed to initialize: {detail}",
     "status.error": "{detail}",
     "error.window_days": "window_days must be >= 1",
@@ -126,7 +134,7 @@ const I18N = {
     "error.save_failed": "Save failed",
     "error.sync_trigger_failed": "Sync trigger failed",
     "error.refresh_calendars_failed": "Refresh calendars failed",
-    "error.ai_test_failed": "AI connectivity test failed",
+    "error.ai_test_failed": "API connectivity test failed",
     "error.refresh_sync_logs_failed": "Refresh sync logs failed",
     "error.refresh_audit_logs_failed": "Refresh audit logs failed",
     "error.load_ai_changes_failed": "Failed to load AI change items",
@@ -134,6 +142,7 @@ const I18N = {
     "error.undo_ai_change_failed": "Undo AI change failed",
     "error.revise_ai_change_failed": "Revise AI change failed",
     "error.revise_instruction_required": "Please enter revise instruction",
+    "error.load_ai_bytes_failed": "Failed to load AI request bytes data",
     "empty.calendars": "No calendars loaded.",
     "empty.sync_logs": "No sync logs.",
     "empty.audit_logs": "No audit logs.",
@@ -154,6 +163,9 @@ const I18N = {
     "ai.menu.revise": "Ask AI to revise",
     "ai.revise_prompt": "How should AI revise this event?",
     "ai.time_range_prefix": "Time: "
+    ,
+    "ai.identity_prefix": "Calendar/UID: ",
+    "ai.legacy_time": "Time unavailable"
   },
   zh: {
     "page.title": "Avocado 管理后台",
@@ -171,6 +183,7 @@ const I18N = {
     "action.refresh_sync_logs": "刷新同步日志",
     "action.refresh_audit_logs": "刷新审计日志",
     "action.refresh_ai_changes": "刷新 AI 修改记录",
+    "action.refresh_ai_bytes": "应用",
     "section.caldav": "CalDAV",
     "section.ai": "AI",
     "section.sync": "同步",
@@ -205,8 +218,9 @@ const I18N = {
     "field.locked": "锁定",
     "field.mandatory": "强制",
     "field.editable_fields": "可编辑字段（逗号分隔）",
+    "field.chart_days": "保留天数",
     "placeholder.keep_secret": "留空则保持当前值",
-    "ai.test_link": "测试 AI API 连通性",
+    "ai.test_link": "测试 API 连通性",
     "hint.refresh_calendars": "点击“执行同步”或“刷新日历”以加载服务器最新列表。",
     "table.name": "名称",
     "table.immutable": "不可变",
@@ -233,9 +247,9 @@ const I18N = {
     "status.calendars_refreshed": "日历已刷新。",
     "status.triggering_custom_sync": "正在执行自定义时间段同步...",
     "status.custom_sync_triggered_refreshed": "自定义时间段同步完成并已刷新日历/日志。",
-    "status.testing_ai": "正在测试 AI 连通性...",
-    "status.ai_ok": "AI 连通性正常。{message}",
-    "status.ai_failed": "AI 连通性失败。{message}",
+    "status.testing_ai": "正在测试 API 连通性...",
+    "status.ai_ok": "API 连通性正常。{message}",
+    "status.ai_failed": "API 连通性失败。{message}",
     "status.refreshing_sync_logs": "正在刷新同步日志...",
     "status.sync_logs_refreshed": "同步日志已刷新。",
     "status.refreshing_audit_logs": "正在刷新审计日志...",
@@ -246,6 +260,8 @@ const I18N = {
     "status.ai_change_undone": "已撤销 AI 修改。",
     "status.requesting_ai_revise": "正在提交 AI 重新修改请求...",
     "status.ai_revise_requested": "已提交 AI 重新修改请求并触发同步。",
+    "status.refreshing_ai_bytes": "正在刷新 AI 请求字节图...",
+    "status.ai_bytes_refreshed": "AI 请求字节图已刷新。",
     "status.initialization_failed": "初始化失败：{detail}",
     "status.error": "{detail}",
     "error.window_days": "window_days 必须 >= 1",
@@ -260,7 +276,7 @@ const I18N = {
     "error.save_failed": "保存失败",
     "error.sync_trigger_failed": "触发同步失败",
     "error.refresh_calendars_failed": "刷新日历失败",
-    "error.ai_test_failed": "AI 连通性测试失败",
+    "error.ai_test_failed": "API 连通性测试失败",
     "error.refresh_sync_logs_failed": "刷新同步日志失败",
     "error.refresh_audit_logs_failed": "刷新审计日志失败",
     "error.load_ai_changes_failed": "加载 AI 修改条目失败",
@@ -268,6 +284,7 @@ const I18N = {
     "error.undo_ai_change_failed": "撤销 AI 修改失败",
     "error.revise_ai_change_failed": "提交 AI 重新修改失败",
     "error.revise_instruction_required": "请输入修改要求",
+    "error.load_ai_bytes_failed": "加载 AI 请求字节数据失败",
     "empty.calendars": "暂无日历数据。",
     "empty.sync_logs": "暂无同步日志。",
     "empty.audit_logs": "暂无审计日志。",
@@ -288,6 +305,9 @@ const I18N = {
     "ai.menu.revise": "要求 AI 按提示重改",
     "ai.revise_prompt": "请输入你希望 AI 如何修改这个日程：",
     "ai.time_range_prefix": "时间："
+    ,
+    "ai.identity_prefix": "日历/UID：",
+    "ai.legacy_time": "时间缺失"
   }
 };
 
@@ -297,6 +317,8 @@ let latestCalendars = [];
 let latestSyncRuns = [];
 let latestAuditEvents = [];
 let latestAiChanges = [];
+let latestAiRequestMetrics = [];
+let aiBytesAutoRefreshTimer = null;
 
 const joinList = (items) => (items || []).join(", ");
 const splitByComma = (text) =>
@@ -335,6 +357,22 @@ const toPrettyJson = (value) => {
     return String(value);
   }
 };
+const ensureSelectOption = (selectEl, value, label = "", makeSelected = false) => {
+  if (!selectEl) return;
+  const text = label || value || "-";
+  let option = [...selectEl.options].find((opt) => opt.value === value);
+  if (!option) {
+    option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    selectEl.appendChild(option);
+  } else if (label) {
+    option.textContent = text;
+  }
+  if (makeSelected) {
+    selectEl.value = value;
+  }
+};
 const summarizeDetails = (value) => {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return shortText(value, 150);
@@ -368,7 +406,7 @@ const formatShortTime = (isoText) => {
   const mi = String(dt.getMinutes()).padStart(2, "0");
   return `${m}-${d} ${h}:${mi}`;
 };
-const renderAiBytesChart = (events) => {
+const renderAiBytesChart = (records) => {
   if (!aiBytesChartCanvas) return;
   const ctx = aiBytesChartCanvas.getContext("2d");
   if (!ctx) return;
@@ -381,15 +419,22 @@ const renderAiBytesChart = (events) => {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-  const points = (events || [])
-    .filter((event) => event.action === "ai_request")
-    .map((event) => ({
-      time: event.created_at || "",
-      bytes: Number(event.details?.request_bytes || 0),
-    }))
+  const points = (records || [])
+    .map((item) => {
+      if (Object.prototype.hasOwnProperty.call(item || {}, "request_bytes")) {
+        return {
+          time: item.created_at || "",
+          bytes: Number(item.request_bytes || 0),
+        };
+      }
+      return {
+        time: item?.created_at || "",
+        bytes: Number(item?.details?.request_bytes || 0),
+      };
+    })
     .filter((item) => Number.isFinite(item.bytes) && item.bytes > 0)
     .sort((a, b) => (a.time < b.time ? -1 : 1))
-    .slice(-30);
+    .slice(-120);
 
   const padLeft = 56;
   const padRight = 20;
@@ -532,7 +577,7 @@ const applyLanguage = (pref) => {
   renderSyncLogs(latestSyncRuns);
   renderAuditLogs(latestAuditEvents);
   renderAiChanges(latestAiChanges);
-  renderAiBytesChart(latestAuditEvents);
+  renderAiBytesChart(latestAiRequestMetrics);
   retranslateStatus();
 };
 
@@ -568,7 +613,13 @@ const bindConfig = (cfg) => {
 
   document.getElementById("ai-base-url").value = cfg.ai?.base_url || "";
   document.getElementById("ai-api-key").value = "";
-  document.getElementById("ai-model").value = cfg.ai?.model || "";
+  const modelEl = document.getElementById("ai-model");
+  const modelValue = cfg.ai?.model || "";
+  if (modelValue) {
+    ensureSelectOption(modelEl, modelValue, modelValue, true);
+  } else {
+    modelEl.value = "";
+  }
   document.getElementById("ai-timeout-seconds").value = cfg.ai?.timeout_seconds ?? 90;
   document.getElementById("ai-system-prompt").value = cfg.ai?.system_prompt || "";
 
@@ -726,13 +777,16 @@ const renderAuditLogs = (events) => {
     `;
     auditLogsBody.appendChild(tr);
   });
-  renderAiBytesChart(latestAuditEvents);
+  renderAiBytesChart(latestAiRequestMetrics);
 };
 
 const formatEventRange = (start, end) => {
-  const startText = toDisplayValue(start);
-  const endText = toDisplayValue(end);
-  return `${startText} -> ${endText}`;
+  const startText = String(start || "").trim();
+  const endText = String(end || "").trim();
+  if (!startText && !endText) return t("ai.legacy_time");
+  const left = startText || "-";
+  const right = endText || "-";
+  return `${left} -> ${right}`;
 };
 
 const hideAllKebabMenus = () => {
@@ -784,8 +838,13 @@ const renderAiChanges = (changes) => {
 
   latestAiChanges.forEach((item) => {
     const patchLines = Array.isArray(item.patch) ? item.patch : [];
-    const patchHtml = patchLines.length
-      ? patchLines
+    const visiblePatchLines = patchLines.filter((line) => {
+      const beforeText = String(line?.before || "");
+      const afterText = String(line?.after || "");
+      return beforeText !== afterText;
+    });
+    const patchHtml = visiblePatchLines.length
+      ? visiblePatchLines
           .map(
             (line) =>
               `<div class="ai-change-patch-line"><strong>${escapeHtml(line.field || "")}</strong>: ${escapeHtml(
@@ -802,6 +861,9 @@ const renderAiChanges = (changes) => {
         <div>
           <p class="ai-change-title">${escapeHtml(item.title || "(Untitled)")}</p>
           <div class="ai-change-meta">${escapeHtml(formatEventRange(item.start, item.end))}</div>
+          <div class="ai-change-meta">${escapeHtml(t("ai.identity_prefix"))}${escapeHtml(
+            `${item.calendar_id || "-"} / ${item.uid || "-"}`
+          )}</div>
           <div class="ai-change-meta">${escapeHtml(item.created_at || "")}</div>
         </div>
         <div class="kebab-wrap">
@@ -972,13 +1034,82 @@ const loadAuditLogs = async () => {
 };
 
 const loadAiChanges = async () => {
-  const res = await fetch("/api/ai/changes?limit=50");
+  const res = await fetch("/api/ai/changes?limit=15");
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`${t("error.load_ai_changes_failed")}: ${res.status} ${errorText}`);
   }
   const data = await res.json();
   renderAiChanges(data.changes || []);
+};
+
+const getAiBytesDays = () => {
+  const value = Number(aiBytesDaysInput?.value || "90");
+  if (!Number.isFinite(value) || value < 1) return 90;
+  return Math.min(3650, Math.floor(value));
+};
+
+const persistAiBytesDays = (days) => {
+  try {
+    localStorage.setItem(AI_BYTES_DAYS_KEY, String(days));
+  } catch (_err) {
+    // ignore storage errors
+  }
+};
+
+const loadAiBytesDaysPref = () => {
+  let days = 90;
+  try {
+    const raw = localStorage.getItem(AI_BYTES_DAYS_KEY);
+    if (raw) {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed >= 1) days = Math.min(3650, Math.floor(parsed));
+    }
+  } catch (_err) {
+    // ignore storage errors
+  }
+  if (aiBytesDaysInput) aiBytesDaysInput.value = String(days);
+  return days;
+};
+
+const loadAiRequestMetrics = async ({ silent = false } = {}) => {
+  const days = getAiBytesDays();
+  persistAiBytesDays(days);
+  if (!silent) setStatus("info", "status.refreshing_ai_bytes");
+  try {
+    const res = await fetch(`/api/metrics/ai-request-bytes?days=${encodeURIComponent(days)}&limit=20000`);
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`${t("error.load_ai_bytes_failed")}: ${res.status} ${errorText}`);
+    }
+    const data = await res.json();
+    latestAiRequestMetrics = data.points || [];
+    renderAiBytesChart(latestAiRequestMetrics);
+    try {
+      localStorage.setItem(
+        AI_BYTES_CACHE_KEY,
+        JSON.stringify({ days, points: latestAiRequestMetrics, cached_at: new Date().toISOString() })
+      );
+    } catch (_err) {
+      // ignore storage errors
+    }
+    if (!silent) setStatus("success", "status.ai_bytes_refreshed");
+  } catch (err) {
+    if (latestAiRequestMetrics.length === 0) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(AI_BYTES_CACHE_KEY) || "{}");
+        if (Array.isArray(cached.points) && cached.points.length) {
+          latestAiRequestMetrics = cached.points;
+          renderAiBytesChart(latestAiRequestMetrics);
+        }
+      } catch (_cacheErr) {
+        // ignore cache parse errors
+      }
+    }
+    if (!silent) {
+      setStatus("error", "status.error", { detail: err.message || t("error.load_ai_bytes_failed") });
+    }
+  }
 };
 
 const saveConfig = async () => {
@@ -998,6 +1129,7 @@ const saveConfig = async () => {
     await loadConfig();
     await loadCalendars();
     await loadAiChanges();
+    await loadAiRequestMetrics({ silent: true });
     setStatus("success", "status.config_saved");
   } catch (err) {
     setStatus("error", "status.error", { detail: err.message || t("error.save_failed") });
@@ -1019,6 +1151,7 @@ const runSync = async () => {
     await loadSyncLogs();
     await loadAuditLogs();
     await loadAiChanges();
+    await loadAiRequestMetrics({ silent: true });
     setStatus("success", "status.sync_triggered_refreshed");
   } catch (err) {
     setStatus("error", "status.error", { detail: err.message || t("error.sync_trigger_failed") });
@@ -1058,6 +1191,7 @@ const runCustomRangeSync = async () => {
     await loadSyncLogs();
     await loadAuditLogs();
     await loadAiChanges();
+    await loadAiRequestMetrics({ silent: true });
     setStatus("success", "status.custom_sync_triggered_refreshed");
   } catch (err) {
     setStatus("error", "status.error", { detail: err.message || t("error.sync_trigger_failed") });
@@ -1090,6 +1224,15 @@ const testAiConnectivity = async () => {
     }
     const data = await res.json();
     const message = (data.message || "").trim();
+    const modelEl = document.getElementById("ai-model");
+    const currentModel = modelEl.value;
+    const models = Array.isArray(data.models) ? data.models.map((x) => String(x || "").trim()).filter(Boolean) : [];
+    models.forEach((modelId) => ensureSelectOption(modelEl, modelId, modelId, false));
+    if (currentModel) {
+      ensureSelectOption(modelEl, currentModel, currentModel, true);
+    } else if (models.length) {
+      modelEl.value = models.includes(modelEl.value) ? modelEl.value : models[0];
+    }
     if (data.ok) {
       setStatus("success", "status.ai_ok", { message });
     } else {
@@ -1141,6 +1284,15 @@ const refreshAiChanges = async () => {
   }
 };
 
+const refreshAiBytes = async () => {
+  withPending(refreshAiBytesBtn, true);
+  try {
+    await loadAiRequestMetrics({ silent: false });
+  } finally {
+    withPending(refreshAiBytesBtn, false);
+  }
+};
+
 saveBtn.addEventListener("click", saveConfig);
 syncBtn.addEventListener("click", runSync);
 customSyncBtn.addEventListener("click", runCustomRangeSync);
@@ -1153,21 +1305,27 @@ aiTestLink.addEventListener("click", (event) => {
 refreshSyncLogsBtn.addEventListener("click", refreshSyncLogs);
 refreshAuditLogsBtn.addEventListener("click", refreshAuditLogs);
 refreshAiChangesBtn.addEventListener("click", refreshAiChanges);
+refreshAiBytesBtn.addEventListener("click", refreshAiBytes);
 tabConfigBtn.addEventListener("click", () => setActiveTab("config"));
 tabCalendarsBtn.addEventListener("click", () => setActiveTab("calendars"));
 tabLogsBtn.addEventListener("click", () => setActiveTab("logs"));
-window.addEventListener("resize", () => renderAiBytesChart(latestAuditEvents));
+window.addEventListener("resize", () => renderAiBytesChart(latestAiRequestMetrics));
 document.addEventListener("click", () => hideAllKebabMenus());
 
 (async () => {
   try {
     initLanguage();
+    loadAiBytesDaysPref();
     setActiveTab("config");
     await loadConfig();
     await loadCalendars();
     await loadSyncLogs();
     await loadAuditLogs();
     await loadAiChanges();
+    await loadAiRequestMetrics({ silent: true });
+    aiBytesAutoRefreshTimer = window.setInterval(() => {
+      void loadAiRequestMetrics({ silent: true });
+    }, 30000);
   } catch (err) {
     setStatus("error", "status.initialization_failed", { detail: err.message || "" });
   }

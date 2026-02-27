@@ -4,6 +4,7 @@ from avocado.models import EventRecord
 from avocado.sync_engine import (
     _collapse_nested_managed_uid,
     _event_has_user_intent,
+    _extract_user_intent,
     _managed_uid_prefix_depth,
     _normalize_calendar_name,
 )
@@ -40,7 +41,7 @@ class SyncEngineHelperTests(unittest.TestCase):
         event_with_intent = EventRecord(
             calendar_id="cal",
             uid="uid-2",
-            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent: \"挪到午饭前\"\n[/AI Task]",
+            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent: \"move to around 3pm\"\n[/AI Task]",
         )
         self.assertFalse(_event_has_user_intent(event_without_intent))
         self.assertTrue(_event_has_user_intent(event_with_intent))
@@ -49,9 +50,17 @@ class SyncEngineHelperTests(unittest.TestCase):
         event_with_non_yaml_intent = EventRecord(
             calendar_id="cal",
             uid="uid-3",
-            description="[AI Task]\nuser_intent: 挪到吃饭前，下午3点左右:)\n[/AI Task]",
+            description="[AI Task]\nuser_intent: move before meal around 3pm)\n[/AI Task]",
         )
         self.assertTrue(_event_has_user_intent(event_with_non_yaml_intent))
+
+    def test_extract_user_intent(self) -> None:
+        event_with_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-4",
+            description="[AI Task]\nuser_intent: move earlier by 30 minutes\n[/AI Task]",
+        )
+        self.assertEqual(_extract_user_intent(event_with_intent), "move earlier by 30 minutes")
 
 
 if __name__ == "__main__":

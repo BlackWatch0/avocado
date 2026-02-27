@@ -50,10 +50,14 @@
           <input id="ai-base-url" type="text" required>
         </label>
         <div class="inline-link-wrap">
-          <a id="ai-test-link" href="#" class="inline-link" data-i18n="ai.test_link">Test AI API connectivity</a>
+          <a id="ai-test-link" href="#" class="inline-link" data-i18n="ai.test_link">Test API connectivity</a>
         </div>
         <label><span data-i18n="field.api_key">API Key</span><input id="ai-api-key" type="password" data-i18n-placeholder="placeholder.keep_secret"></label>
-        <label><span data-i18n="field.model">Model</span><input id="ai-model" type="text" required></label>
+        <label><span data-i18n="field.model">Model</span>
+          <select id="ai-model" required>
+            <option value="">-</option>
+          </select>
+        </label>
         <label><span data-i18n="field.timeout_seconds">Timeout Seconds</span><input id="ai-timeout-seconds" type="number" min="1" required></label>
         <label><span data-i18n="field.system_prompt">System Prompt</span><textarea id="ai-system-prompt" rows="10"></textarea></label>
       </section>
@@ -134,6 +138,13 @@
           <section class="log-card">
             <div class="log-card-head">
               <h3 data-i18n="section.ai_bytes_chart">AI Request Bytes</h3>
+              <div class="chart-controls">
+                <label>
+                  <span data-i18n="field.chart_days">Retention Days</span>
+                  <input id="ai-bytes-days" type="number" min="1" max="3650" value="90">
+                </label>
+                <button id="refresh-ai-bytes-btn" type="button" data-i18n="action.refresh_ai_bytes">Apply</button>
+              </div>
             </div>
             <div class="chart-wrap">
               <canvas id="ai-bytes-chart" width="1100" height="260"></canvas>

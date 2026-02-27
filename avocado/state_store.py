@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -187,4 +187,47 @@ class StateStore:
                     (calendar_id, uid),
                 ).fetchone()
         return dict(row) if row else None
+
+    def ai_request_bytes_series(self, *, days: int = 90, limit: int = 5000) -> list[dict[str, Any]]:
+        days = max(1, int(days))
+        limit = max(1, int(limit))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, created_at, details_json
+                    FROM audit_events
+                    WHERE action = 'ai_request'
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        points: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            created_at = str(row["created_at"] or "")
+            try:
+                created_dt = datetime.fromisoformat(created_at)
+                if created_dt.tzinfo is None:
+                    created_dt = created_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            if created_dt < cutoff:
+                continue
+            try:
+                details = json.loads(row["details_json"] or "{}")
+            except Exception:
+                details = {}
+            request_bytes = int(details.get("request_bytes", 0) or 0)
+            if request_bytes <= 0:
+                continue
+            points.append(
+                {
+                    "id": int(row["id"]),
+                    "created_at": created_at,
+                    "request_bytes": request_bytes,
+                }
+            )
+        return points
 

@@ -104,12 +104,16 @@ class WebAdminTests(unittest.TestCase):
         with mock.patch(
             "avocado.web_admin.OpenAICompatibleClient.test_connectivity",
             return_value=(True, "Connected. Model response: OK"),
+        ), mock.patch(
+            "avocado.web_admin.OpenAICompatibleClient.list_models",
+            return_value=["gpt-4o-mini", "gpt-4.1-mini"],
         ):
             resp = self.client.post("/api/ai/test")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertTrue(data["ok"])
         self.assertIn("Connected", data["message"])
+        self.assertEqual(data["models"], ["gpt-4o-mini", "gpt-4.1-mini"])
 
     def test_calendars_marks_managed_duplicates(self) -> None:
         update = {
@@ -245,6 +249,39 @@ class WebAdminTests(unittest.TestCase):
         self.assertTrue(len(items) >= 1)
         self.assertEqual(items[0]["uid"], "uid-1")
 
+    def test_ai_changes_reason_fallback_from_fields(self) -> None:
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="user-id",
+            uid="uid-reason",
+            action="apply_ai_change",
+            details={
+                "reason": "",
+                "fields": ["start", "end"],
+                "patch": [
+                    {"field": "start", "before": "2026-03-05T10:00:00+00:00", "after": "2026-03-05T11:00:00+00:00"}
+                ],
+            },
+        )
+        resp = self.client.get("/api/ai/changes?limit=10")
+        self.assertEqual(resp.status_code, 200)
+        items = resp.json()["changes"]
+        target = next((x for x in items if x["uid"] == "uid-reason"), None)
+        self.assertIsNotNone(target)
+        self.assertIn("AI adjusted fields", target["reason"])
+
+    def test_ai_changes_legacy_without_patch_is_hidden(self) -> None:
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="user-id",
+            uid="uid-legacy",
+            action="apply_ai_change",
+            details={},
+        )
+        resp = self.client.get("/api/ai/changes?limit=10")
+        self.assertEqual(resp.status_code, 200)
+        items = resp.json()["changes"]
+        target = next((x for x in items if x["uid"] == "uid-legacy"), None)
+        self.assertIsNone(target)
+
     def test_undo_ai_change(self) -> None:
         self.client.app.state.context.state_store.record_audit_event(
             calendar_id="user-id",
@@ -321,6 +358,26 @@ class WebAdminTests(unittest.TestCase):
                 )
         self.assertEqual(resp.status_code, 200)
         trigger_manual.assert_called_once()
+
+    def test_ai_request_bytes_metrics_endpoint(self) -> None:
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="system",
+            uid="ai",
+            action="ai_request",
+            details={"request_bytes": 1234},
+        )
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="system",
+            uid="ai",
+            action="ai_request",
+            details={"request_bytes": 4321},
+        )
+        resp = self.client.get("/api/metrics/ai-request-bytes?days=90&limit=100")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["days"], 90)
+        self.assertGreaterEqual(len(data["points"]), 2)
+        self.assertIn("request_bytes", data["points"][-1])
 
 
 if __name__ == "__main__":
