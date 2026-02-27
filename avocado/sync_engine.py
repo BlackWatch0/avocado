@@ -633,13 +633,14 @@ class SyncEngine:
                         event.description = new_description
                         event.locked = bool(task_payload.get("locked", True))
                         event.mandatory = bool(task_payload.get("mandatory", True))
-
                         if changed:
-                            event = caldav_service.upsert_event(calendar.calendar_id, event)
+                            # Immutable source calendars are treated as read-only. Any AI-task
+                            # metadata normalization should be maintained on user-layer copies
+                            # instead of writing back to the source immutable event.
                             self.state_store.record_audit_event(
                                 calendar_id=calendar.calendar_id,
                                 uid=event.uid,
-                                action="seed_or_normalize_ai_task",
+                                action="skip_seed_or_normalize_ai_task_on_immutable",
                                 details={"trigger": trigger, "layer": "immutable"},
                             )
                     else:
