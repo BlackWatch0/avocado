@@ -668,7 +668,10 @@ class SyncEngine:
                                             },
                                         )
 
-                    all_events.append(event)
+                    # Planning payload should include immutable constraints, while editable
+                    # source events are represented by user-layer mirrors to avoid duplicates.
+                    if calendar_is_immutable:
+                        all_events.append(event)
                     self.state_store.upsert_snapshot(
                         calendar_id=calendar.calendar_id,
                         uid=event.uid,

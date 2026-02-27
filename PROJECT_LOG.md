@@ -59,6 +59,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 去重规划输入：不再重复收集可编辑源日历事件 | `avocado/sync_engine.py` | 构建 AI planning payload 时仅保留 immutable 源日历事件与 user-layer 事件；可编辑源日历事件由 user-layer 镜像代表，避免重复进入模型导致重复日程或错判 | 风险低；若某源事件未成功镜像到 user-layer，可能暂时不参与规划（可通过审计定位） | AVO-034 |
 | 2026-02-27 | 修复 AI 改简介后 `user_intent` 被覆盖清空 | `avocado/sync_engine.py` | AI 返回 `description` 时，应用后会强制保留原事件 `user_intent`，避免下一轮同步被判 `no_intent` 而跳过 | 风险低；仅在 AI 应用链路补一层意图保留，不影响字段冲突策略 | AVO-033 |
 | 2026-02-27 | 修复 stage 镜像 Duplicate UID 导致整轮同步失败 | `avocado/caldav_client.py`, `avocado/sync_engine.py` | `upsert_event` 在 UID 冲突时新增时间窗口检索回退；stage 镜像写入遇到 `calobjects_by_uid_index` 冲突时自动执行“删除同 UID + 重试一次”，失败则跳过单条并记录审计，不再中断整轮同步 | 风险低；极端情况下仅跳过单条 stage 镜像事件，不影响 user-layer 主写入链路 | AVO-032 |
 | 2026-02-27 | 修复 user_intent 跨层未生效：源日历意图自动同步到用户层 | `avocado/sync_engine.py`, `tests/test_sync_engine_helpers.py` | 当用户在 `personal/intake` 等非 stage 源日历更新 `user_intent` 时，系统会同步到对应 user-layer 事件并触发重排；减少 `ai_change_skipped_no_intent` 误跳过 | 风险低；仅增强意图同步，不改变既有锁定/冲突策略 | AVO-031 |
@@ -101,6 +102,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-034 | 规划输入去重（源编辑层与用户层不重复） | Done | AI payload 不再同时包含可编辑源事件与其 user-layer 镜像，避免重复收集造成重复日程 | P0 | AVO-022 | 2026-02-27 |
 | AVO-033 | AI 描述改写时保留 user_intent | Done | AI 返回 description 并写入后，事件 `user_intent` 仍保持用户输入，不再在下一轮出现 `ai_change_skipped_no_intent` 循环 | P0 | AVO-031 | 2026-02-27 |
 | AVO-032 | Stage 镜像 UID 冲突容错修复 | Done | 出现 `calobjects_by_uid_index` 冲突时不会导致整轮同步报错；系统会尝试修复冲突并继续后续事件处理 | P0 | AVO-022 | 2026-02-27 |
 | AVO-031 | 源日历 user_intent 自动同步到 user-layer | Done | 在非 stage 日历修改 `user_intent` 后下一轮同步会将意图写入 user-layer 对应事件，并参与 AI 重排，不再被 `no_intent` 跳过 | P0 | AVO-022, AVO-020 | 2026-02-27 |
