@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from avocado.caldav_client import CalDAVService
+from avocado.config_manager import ConfigManager
+from avocado.scheduler import SyncScheduler
+from avocado.state_store import StateStore
+from avocado.sync_engine import SyncEngine
+
+
+class ConfigUpdateRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class CalendarRulesUpdateRequest(BaseModel):
+    immutable_keywords: list[str] = Field(default_factory=list)
+    immutable_calendar_ids: list[str] = Field(default_factory=list)
+    staging_calendar_id: str = ""
+    staging_calendar_name: str | None = None
+
+
+class AppContext:
+    def __init__(self, config_path: str, state_path: str) -> None:
+        self.config_manager = ConfigManager(config_path)
+        self.state_store = StateStore(state_path)
+        self.sync_engine = SyncEngine(self.config_manager, self.state_store)
+        self.scheduler = SyncScheduler(self.sync_engine, self.config_manager)
+
+
+def create_app() -> FastAPI:
+    config_path = os.getenv("AVOCADO_CONFIG_PATH", "config.yaml")
+    state_path = os.getenv("AVOCADO_STATE_PATH", "data/state.db")
+    context = AppContext(config_path=config_path, state_path=state_path)
+
+    app = FastAPI(title="Avocado Admin", version="0.1.0")
+    app.state.context = context
+
+    @app.on_event("startup")
+    def _startup() -> None:
+        app.state.context.scheduler.start()
+
+    @app.on_event("shutdown")
+    def _shutdown() -> None:
+        app.state.context.scheduler.stop()
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/api/config")
+    def get_config() -> dict[str, Any]:
+        return app.state.context.config_manager.masked()
+
+    @app.put("/api/config")
+    def put_config(request: ConfigUpdateRequest) -> dict[str, Any]:
+        if not isinstance(request.payload, dict):
+            raise HTTPException(status_code=400, detail="payload must be an object")
+        updated = app.state.context.config_manager.update(request.payload)
+        return {
+            "message": "config updated",
+            "config": updated.to_dict(),
+        }
+
+    @app.get("/api/calendars")
+    def list_calendars() -> dict[str, Any]:
+        config = app.state.context.config_manager.load()
+        service = CalDAVService(config.caldav)
+        try:
+            calendars = service.list_calendars()
+            suggested = service.suggest_immutable_calendar_ids(
+                calendars, config.calendar_rules.immutable_keywords
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        output = []
+        for cal in calendars:
+            item = cal.to_dict()
+            item["immutable_suggested"] = cal.calendar_id in suggested
+            item["immutable_selected"] = cal.calendar_id in set(config.calendar_rules.immutable_calendar_ids)
+            item["is_staging"] = cal.calendar_id == config.calendar_rules.staging_calendar_id
+            output.append(item)
+        return {"calendars": output}
+
+    @app.put("/api/calendar-rules")
+    def put_calendar_rules(request: CalendarRulesUpdateRequest) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "calendar_rules": {
+                "immutable_keywords": request.immutable_keywords,
+                "immutable_calendar_ids": request.immutable_calendar_ids,
+                "staging_calendar_id": request.staging_calendar_id,
+            }
+        }
+        if request.staging_calendar_name is not None:
+            payload["calendar_rules"]["staging_calendar_name"] = request.staging_calendar_name
+        updated = app.state.context.config_manager.update(payload)
+        return {"message": "calendar rules updated", "calendar_rules": updated.calendar_rules.__dict__}
+
+    @app.post("/api/sync/run")
+    def trigger_sync() -> dict[str, str]:
+        app.state.context.scheduler.trigger_manual()
+        return {"message": "sync triggered"}
+
+    @app.get("/api/sync/status")
+    def sync_status(limit: int = 20) -> dict[str, Any]:
+        return {"runs": app.state.context.state_store.recent_sync_runs(limit=limit)}
+
+    @app.get("/api/audit/events")
+    def audit_events(limit: int = 100) -> dict[str, Any]:
+        return {"events": app.state.context.state_store.recent_audit_events(limit=limit)}
+
+    return app
+
+
+app = create_app()
+
