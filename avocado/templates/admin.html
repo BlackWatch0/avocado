@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Avocado Admin</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  <main class="page">
+    <header class="top">
+      <h1>Avocado Admin</h1>
+      <div class="actions">
+        <button id="sync-btn" type="button">Run Sync</button>
+        <button id="refresh-calendars-btn" type="button">Refresh Calendars</button>
+        <button id="save-btn" type="button">Save Config</button>
+      </div>
+    </header>
+
+    <section id="status" class="status info">Loading config...</section>
+
+    <form id="config-form">
+      <section class="card">
+        <h2>CalDAV</h2>
+        <label>Base URL<input id="caldav-base-url" type="text" required></label>
+        <label>Username<input id="caldav-username" type="text" required></label>
+        <label>Password<input id="caldav-password" type="password" placeholder="Leave empty to keep current"></label>
+      </section>
+
+      <section class="card">
+        <h2>AI</h2>
+        <label>Base URL<input id="ai-base-url" type="text" required></label>
+        <label>API Key<input id="ai-api-key" type="password" placeholder="Leave empty to keep current"></label>
+        <label>Model<input id="ai-model" type="text" required></label>
+        <label>Timeout Seconds<input id="ai-timeout-seconds" type="number" min="1" required></label>
+      </section>
+
+      <section class="card">
+        <h2>Sync</h2>
+        <label>Window Days<input id="sync-window-days" type="number" min="1" required></label>
+        <label>Interval Seconds<input id="sync-interval-seconds" type="number" min="30" required></label>
+        <label>Timezone<input id="sync-timezone" type="text" required></label>
+      </section>
+
+      <section class="card">
+        <h2>Calendar Rules</h2>
+        <label>Immutable Keywords (comma separated)<input id="rules-immutable-keywords" type="text"></label>
+        <label>Immutable Calendar IDs (auto-filled from calendar table)<textarea id="rules-immutable-calendar-ids" rows="4" readonly></textarea></label>
+        <label>Staging Calendar ID<input id="rules-staging-calendar-id" type="text"></label>
+        <label>Staging Calendar Name<input id="rules-staging-calendar-name" type="text"></label>
+      </section>
+
+      <section class="card">
+        <h2>Task Defaults</h2>
+        <label class="checkbox"><input id="task-locked" type="checkbox"> Locked</label>
+        <label class="checkbox"><input id="task-mandatory" type="checkbox"> Mandatory</label>
+        <label>Editable Fields (comma separated)<input id="task-editable-fields" type="text"></label>
+      </section>
+
+      <section class="card wide">
+        <h2>Calendars (from CalDAV)</h2>
+        <p class="muted">Click Sync or Refresh Calendars to load latest list from server.</p>
+        <div class="table-wrap">
+          <table id="calendar-behaviors-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Immutable</th>
+                <th>Default Locked</th>
+                <th>Default Mandatory</th>
+              </tr>
+            </thead>
+            <tbody id="calendar-behaviors-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </form>
+  </main>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>

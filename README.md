@@ -12,6 +12,7 @@ Avocado is a CalDAV-oriented AI scheduling service that can:
 - manage a structured `[AI Task]` block in event `DESCRIPTION`
 - call an OpenAI-compatible API to generate scheduling changes
 - expose an intranet admin API for config, sync trigger, and audit
+- provide a no-login admin page at `/` for config editing
 
 ## Repository Layout
 
@@ -96,7 +97,9 @@ Recommendation:
 ## Admin API
 
 - `GET /healthz`
+- `GET /` (admin page)
 - `GET /api/config`
+- `GET /api/config/raw`
 - `PUT /api/config`
 - `GET /api/calendars`
 - `PUT /api/calendar-rules`
@@ -106,6 +109,15 @@ Recommendation:
 
 Default Docker admin URL:
 - `http://127.0.0.1:18080`
+
+Admin page behavior:
+- secrets are masked by default
+- leave `CalDAV password` or `AI API key` empty to keep existing values
+- click `Run Sync` then calendar list is refreshed from CalDAV
+- per-calendar default behavior can be configured in UI:
+  - immutable/editable
+  - default locked
+  - default mandatory
 
 ## Test
 

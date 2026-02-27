@@ -20,6 +20,7 @@ calendar_rules:
     - "work"
     - "固定"
   immutable_calendar_ids: []
+  per_calendar_defaults: {}
   staging_calendar_id: ""
   staging_calendar_name: "Avocado AI Staging"
 
@@ -32,4 +33,3 @@ task_defaults:
     - summary
     - location
     - description
-

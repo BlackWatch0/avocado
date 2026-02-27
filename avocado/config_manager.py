@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import os
 import threading
 from pathlib import Path
@@ -42,16 +43,32 @@ class ConfigManager:
     def save(self, config: AppConfig) -> None:
         with self._lock:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_dict = config.to_dict()
             tmp_path = self.config_path.with_suffix(self.config_path.suffix + ".tmp")
             with tmp_path.open("w", encoding="utf-8") as handle:
                 yaml.safe_dump(
-                    config.to_dict(),
+                    config_dict,
                     handle,
                     sort_keys=False,
                     allow_unicode=True,
                     default_flow_style=False,
                 )
-            tmp_path.replace(self.config_path)
+            try:
+                tmp_path.replace(self.config_path)
+            except OSError as exc:
+                # Some bind-mounted single files in containers cannot be atomically replaced.
+                if exc.errno != errno.EBUSY:
+                    raise
+                with self.config_path.open("w", encoding="utf-8") as handle:
+                    yaml.safe_dump(
+                        config_dict,
+                        handle,
+                        sort_keys=False,
+                        allow_unicode=True,
+                        default_flow_style=False,
+                    )
+                if tmp_path.exists():
+                    tmp_path.unlink()
 
     def update(self, payload: dict[str, Any]) -> AppConfig:
         with self._lock:
@@ -68,4 +85,3 @@ class ConfigManager:
         if config.get("ai", {}).get("api_key"):
             config["ai"]["api_key"] = "***"
         return config
-

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from avocado.caldav_client import CalDAVService
@@ -22,6 +25,7 @@ class CalendarRulesUpdateRequest(BaseModel):
     immutable_calendar_ids: list[str] = Field(default_factory=list)
     staging_calendar_id: str = ""
     staging_calendar_name: str | None = None
+    per_calendar_defaults: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class AppContext:
@@ -32,13 +36,58 @@ class AppContext:
         self.scheduler = SyncScheduler(self.sync_engine, self.config_manager)
 
 
+def _masked_meta(config_dict: dict[str, Any]) -> dict[str, Any]:
+    has_caldav_password = bool(config_dict.get("caldav", {}).get("password", "").strip())
+    has_ai_api_key = bool(config_dict.get("ai", {}).get("api_key", "").strip())
+    return {
+        "caldav": {"password": {"is_masked": has_caldav_password}},
+        "ai": {"api_key": {"is_masked": has_ai_api_key}},
+    }
+
+
+def _sanitize_config_payload(payload: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(payload)
+    current_caldav_password = str(current.get("caldav", {}).get("password", ""))
+    current_ai_api_key = str(current.get("ai", {}).get("api_key", ""))
+
+    caldav = sanitized.get("caldav")
+    if isinstance(caldav, dict):
+        password = caldav.get("password")
+        if password is not None:
+            password_text = str(password).strip()
+            if password_text in {"", "***"}:
+                if current_caldav_password:
+                    caldav.pop("password", None)
+                else:
+                    caldav["password"] = ""
+        if not caldav:
+            sanitized.pop("caldav", None)
+
+    ai = sanitized.get("ai")
+    if isinstance(ai, dict):
+        api_key = ai.get("api_key")
+        if api_key is not None:
+            api_key_text = str(api_key).strip()
+            if api_key_text in {"", "***"}:
+                if current_ai_api_key:
+                    ai.pop("api_key", None)
+                else:
+                    ai["api_key"] = ""
+        if not ai:
+            sanitized.pop("ai", None)
+
+    return sanitized
+
+
 def create_app() -> FastAPI:
     config_path = os.getenv("AVOCADO_CONFIG_PATH", "config.yaml")
     state_path = os.getenv("AVOCADO_STATE_PATH", "data/state.db")
     context = AppContext(config_path=config_path, state_path=state_path)
+    module_dir = Path(__file__).resolve().parent
 
     app = FastAPI(title="Avocado Admin", version="0.1.0")
     app.state.context = context
+    app.mount("/static", StaticFiles(directory=str(module_dir / "static")), name="static")
 
     @app.on_event("startup")
     def _startup() -> None:
@@ -47,6 +96,10 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     def _shutdown() -> None:
         app.state.context.scheduler.stop()
+
+    @app.get("/", include_in_schema=False)
+    def admin_page() -> FileResponse:
+        return FileResponse(module_dir / "templates" / "admin.html")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -60,11 +113,19 @@ def create_app() -> FastAPI:
     def put_config(request: ConfigUpdateRequest) -> dict[str, Any]:
         if not isinstance(request.payload, dict):
             raise HTTPException(status_code=400, detail="payload must be an object")
-        updated = app.state.context.config_manager.update(request.payload)
+        current = app.state.context.config_manager.load().to_dict()
+        sanitized_payload = _sanitize_config_payload(request.payload, current)
+        updated = app.state.context.config_manager.update(sanitized_payload)
         return {
             "message": "config updated",
             "config": updated.to_dict(),
         }
+
+    @app.get("/api/config/raw")
+    def get_config_raw() -> dict[str, Any]:
+        raw = app.state.context.config_manager.load().to_dict()
+        masked = app.state.context.config_manager.masked()
+        return {"config": masked, "meta": _masked_meta(raw)}
 
     @app.get("/api/calendars")
     def list_calendars() -> dict[str, Any]:
@@ -79,11 +140,30 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         output = []
+        per_calendar_defaults = config.calendar_rules.per_calendar_defaults
+        immutable_explicit = set(config.calendar_rules.immutable_calendar_ids)
+        editable_override = {
+            cid
+            for cid, behavior_entry in per_calendar_defaults.items()
+            if str(behavior_entry.get("mode", "editable")).lower() == "editable"
+        }
         for cal in calendars:
             item = cal.to_dict()
+            behavior = per_calendar_defaults.get(cal.calendar_id, {})
+            mode = str(behavior.get("mode", "editable")).lower()
+            if mode not in {"editable", "immutable"}:
+                mode = "editable"
+
+            immutable_selected = cal.calendar_id in immutable_explicit or mode == "immutable"
+            if mode == "editable":
+                immutable_selected = cal.calendar_id in immutable_explicit and cal.calendar_id not in editable_override
+
             item["immutable_suggested"] = cal.calendar_id in suggested
-            item["immutable_selected"] = cal.calendar_id in set(config.calendar_rules.immutable_calendar_ids)
+            item["immutable_selected"] = immutable_selected
             item["is_staging"] = cal.calendar_id == config.calendar_rules.staging_calendar_id
+            item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
+            item["default_mandatory"] = bool(behavior.get("mandatory", config.task_defaults.mandatory))
+            item["mode"] = "immutable" if immutable_selected else "editable"
             output.append(item)
         return {"calendars": output}
 
@@ -94,6 +174,7 @@ def create_app() -> FastAPI:
                 "immutable_keywords": request.immutable_keywords,
                 "immutable_calendar_ids": request.immutable_calendar_ids,
                 "staging_calendar_id": request.staging_calendar_id,
+                "per_calendar_defaults": request.per_calendar_defaults,
             }
         }
         if request.staging_calendar_name is not None:
@@ -118,4 +199,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
