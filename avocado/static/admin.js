@@ -13,6 +13,7 @@ const langSelect = document.getElementById("lang-select");
 const calendarBody = document.getElementById("calendar-behaviors-body");
 const syncLogsBody = document.getElementById("sync-logs-body");
 const auditLogsBody = document.getElementById("audit-logs-body");
+const aiBytesChartCanvas = document.getElementById("ai-bytes-chart");
 const panelEls = [...document.querySelectorAll("[data-panel]")];
 
 const LANG_PREF_KEY = "avocado_admin_lang_pref";
@@ -40,6 +41,7 @@ const I18N = {
     "section.task_defaults": "Task Defaults",
     "section.calendars": "Calendars (from CalDAV)",
     "section.logs": "Run Logs",
+    "section.ai_bytes_chart": "AI Request Bytes",
     "section.sync_logs": "Sync Runs",
     "section.audit_logs": "Audit Events",
     "field.base_url": "Base URL",
@@ -128,7 +130,9 @@ const I18N = {
     "tag.duplicate_intake": "duplicate-intake",
     "common.custom": "custom",
     "details.view": "View details",
-    "details.empty": "No details"
+    "details.empty": "No details",
+    "chart.no_data": "No AI request data yet",
+    "chart.bytes_unit": "bytes"
   },
   zh: {
     "page.title": "Avocado 管理后台",
@@ -152,6 +156,7 @@ const I18N = {
     "section.task_defaults": "任务默认值",
     "section.calendars": "日历列表（来自 CalDAV）",
     "section.logs": "运行日志",
+    "section.ai_bytes_chart": "AI 请求字节数",
     "section.sync_logs": "同步运行日志",
     "section.audit_logs": "审计事件日志",
     "field.base_url": "Base URL",
@@ -240,7 +245,9 @@ const I18N = {
     "tag.duplicate_intake": "重复新日程",
     "common.custom": "自定义",
     "details.view": "查看详情",
-    "details.empty": "无详情"
+    "details.empty": "无详情",
+    "chart.no_data": "暂无 AI 请求数据",
+    "chart.bytes_unit": "字节"
   }
 };
 
@@ -309,6 +316,102 @@ const statusBadgeClass = (status) => {
   if (["error", "failed", "fail"].includes(value)) return "status-error";
   if (["running", "queued", "in_progress"].includes(value)) return "status-running";
   return "status-default";
+};
+const formatShortTime = (isoText) => {
+  if (!isoText) return "-";
+  const dt = new Date(isoText);
+  if (Number.isNaN(dt.getTime())) return isoText;
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  const h = String(dt.getHours()).padStart(2, "0");
+  const mi = String(dt.getMinutes()).padStart(2, "0");
+  return `${m}-${d} ${h}:${mi}`;
+};
+const renderAiBytesChart = (events) => {
+  if (!aiBytesChartCanvas) return;
+  const ctx = aiBytesChartCanvas.getContext("2d");
+  if (!ctx) return;
+
+  const ratio = window.devicePixelRatio || 1;
+  const cssWidth = aiBytesChartCanvas.clientWidth || 900;
+  const cssHeight = aiBytesChartCanvas.clientHeight || 260;
+  aiBytesChartCanvas.width = Math.max(1, Math.floor(cssWidth * ratio));
+  aiBytesChartCanvas.height = Math.max(1, Math.floor(cssHeight * ratio));
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const points = (events || [])
+    .filter((event) => event.action === "ai_request")
+    .map((event) => ({
+      time: event.created_at || "",
+      bytes: Number(event.details?.request_bytes || 0),
+    }))
+    .filter((item) => Number.isFinite(item.bytes) && item.bytes > 0)
+    .sort((a, b) => (a.time < b.time ? -1 : 1))
+    .slice(-30);
+
+  const padLeft = 56;
+  const padRight = 20;
+  const padTop = 18;
+  const padBottom = 34;
+  const plotW = Math.max(10, cssWidth - padLeft - padRight);
+  const plotH = Math.max(10, cssHeight - padTop - padBottom);
+
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padLeft, padTop);
+  ctx.lineTo(padLeft, cssHeight - padBottom);
+  ctx.lineTo(cssWidth - padRight, cssHeight - padBottom);
+  ctx.stroke();
+
+  if (!points.length) {
+    ctx.fillStyle = "#64748b";
+    ctx.font = "13px Segoe UI";
+    ctx.fillText(t("chart.no_data"), padLeft + 10, padTop + 24);
+    return;
+  }
+
+  const maxBytes = Math.max(...points.map((p) => p.bytes));
+  const yMax = maxBytes <= 1 ? 1 : Math.ceil(maxBytes * 1.1);
+  const xStep = points.length === 1 ? 0 : plotW / (points.length - 1);
+
+  ctx.strokeStyle = "#93c5fd";
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 4; i += 1) {
+    const y = padTop + (plotH * i) / 4;
+    ctx.beginPath();
+    ctx.moveTo(padLeft, y);
+    ctx.lineTo(cssWidth - padRight, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#2563eb";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((p, idx) => {
+    const x = padLeft + idx * xStep;
+    const y = padTop + plotH - (p.bytes / yMax) * plotH;
+    if (idx === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = "#1d4ed8";
+  points.forEach((p, idx) => {
+    const x = padLeft + idx * xStep;
+    const y = padTop + plotH - (p.bytes / yMax) * plotH;
+    ctx.beginPath();
+    ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.fillStyle = "#334155";
+  ctx.font = "11px Segoe UI";
+  ctx.fillText(`0`, 20, cssHeight - padBottom + 4);
+  ctx.fillText(`${yMax} ${t("chart.bytes_unit")}`, 8, padTop + 4);
+  ctx.fillText(formatShortTime(points[0].time), padLeft, cssHeight - 10);
+  ctx.fillText(formatShortTime(points[points.length - 1].time), cssWidth - padRight - 86, cssHeight - 10);
 };
 
 const template = (text, vars = {}) =>
@@ -387,6 +490,7 @@ const applyLanguage = (pref) => {
   renderCalendars(latestCalendars);
   renderSyncLogs(latestSyncRuns);
   renderAuditLogs(latestAuditEvents);
+  renderAiBytesChart(latestAuditEvents);
   retranslateStatus();
 };
 
@@ -580,6 +684,7 @@ const renderAuditLogs = (events) => {
     `;
     auditLogsBody.appendChild(tr);
   });
+  renderAiBytesChart(latestAuditEvents);
 };
 
 const readCalendarBehavior = () => {
@@ -861,6 +966,7 @@ refreshAuditLogsBtn.addEventListener("click", refreshAuditLogs);
 tabConfigBtn.addEventListener("click", () => setActiveTab("config"));
 tabCalendarsBtn.addEventListener("click", () => setActiveTab("calendars"));
 tabLogsBtn.addEventListener("click", () => setActiveTab("logs"));
+window.addEventListener("resize", () => renderAiBytesChart(latestAuditEvents));
 
 (async () => {
   try {

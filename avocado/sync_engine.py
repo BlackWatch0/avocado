@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import traceback
 from datetime import datetime, timezone
@@ -657,6 +658,24 @@ class SyncEngine:
                     timezone=config.sync.timezone,
                 )
                 messages = build_messages(planning_payload, system_prompt=config.ai.system_prompt)
+                ai_request_payload = {
+                    "model": config.ai.model,
+                    "messages": messages,
+                    "temperature": 0.2,
+                    "response_format": {"type": "json_object"},
+                }
+                ai_request_bytes = len(json.dumps(ai_request_payload, ensure_ascii=False).encode("utf-8"))
+                self.state_store.record_audit_event(
+                    calendar_id="system",
+                    uid="ai",
+                    action="ai_request",
+                    details={
+                        "trigger": trigger,
+                        "request_bytes": ai_request_bytes,
+                        "messages_count": len(messages),
+                        "events_count": len(all_events),
+                    },
+                )
                 ai_output = ai_client.generate_changes(messages=messages)
                 raw_changes = ai_output.get("changes", [])
                 self.state_store.record_audit_event(

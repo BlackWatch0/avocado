@@ -135,6 +135,7 @@ Admin page behavior:
   - manual override available from the language selector in header
 - `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
+- logs page includes an AI request-bytes line chart (derived from audit action `ai_request`)
 - admin page supports one-click custom time-range sync (start/end datetime)
 
 ## Test
