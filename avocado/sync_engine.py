@@ -108,6 +108,17 @@ def _extract_user_intent(event: EventRecord) -> str:
     return value
 
 
+def _extract_editable_fields(event: EventRecord, fallback_fields: list[str]) -> list[str]:
+    parsed = parse_ai_task_block(event.description or "")
+    if isinstance(parsed, dict):
+        editable_fields = parsed.get("editable_fields")
+        if isinstance(editable_fields, list):
+            cleaned = [str(field).strip() for field in editable_fields if str(field).strip()]
+            if cleaned:
+                return cleaned
+    return [str(field).strip() for field in fallback_fields if str(field).strip()]
+
+
 def _infer_category(event: EventRecord, change: dict[str, Any]) -> str:
     text = " ".join(
         [
@@ -923,11 +934,24 @@ class SyncEngine:
                     continue
 
                 key = (event.calendar_id, event.uid)
+                editable_fields = _extract_editable_fields(event, list(config.task_defaults.editable_fields))
                 outcome = apply_change(
                     current_event=event,
                     change=change,
                     baseline_etag=baseline_etags.get(key, ""),
+                    editable_fields=editable_fields,
                 )
+                if outcome.blocked_fields:
+                    self.state_store.record_audit_event(
+                        calendar_id=event.calendar_id,
+                        uid=event.uid,
+                        action="ai_change_blocked_by_editable_fields",
+                        details={
+                            "trigger": trigger,
+                            "blocked_fields": outcome.blocked_fields,
+                            "editable_fields": editable_fields,
+                        },
+                    )
                 if outcome.conflicted:
                     conflicts += 1
                     self.state_store.record_audit_event(
