@@ -438,9 +438,44 @@ def create_app() -> FastAPI:
         if not before_event.calendar_id or not before_event.uid:
             raise HTTPException(status_code=400, detail="undo event identity missing")
 
+        expected_etag = str(details.get("expected_etag", "") or "").strip()
+        if not expected_etag:
+            after_payload = details.get("after_event")
+            if isinstance(after_payload, dict):
+                expected_etag = str(after_payload.get("etag", "") or "").strip()
+
+        def _record_undo_failure(reason: str, *, current_etag: str = "") -> None:
+            app.state.context.state_store.record_audit_event(
+                calendar_id=before_event.calendar_id,
+                uid=before_event.uid,
+                action="undo_ai_change_failed",
+                details={
+                    "audit_id": request.audit_id,
+                    "reason": reason,
+                    "expected_etag": expected_etag,
+                    "current_etag": current_etag,
+                    "title": before_event.summary,
+                },
+            )
+
         config = app.state.context.config_manager.load()
         service = CalDAVService(config.caldav)
-        restored = service.upsert_event(before_event.calendar_id, before_event)
+        current_event = service.get_event_by_uid(before_event.calendar_id, before_event.uid)
+        if current_event is None:
+            _record_undo_failure("target_event_not_found")
+            raise HTTPException(status_code=404, detail="target event not found")
+        if not expected_etag:
+            _record_undo_failure("expected_etag_missing", current_etag=current_event.etag)
+            raise HTTPException(status_code=400, detail="undo version metadata missing")
+        if current_event.etag != expected_etag:
+            _record_undo_failure("version_conflict", current_etag=current_event.etag)
+            raise HTTPException(status_code=409, detail="事件已被后续修改，请手动确认")
+
+        try:
+            restored = service.upsert_event(before_event.calendar_id, before_event)
+        except Exception as exc:
+            _record_undo_failure(f"undo_apply_error: {exc}", current_etag=current_event.etag)
+            raise
         app.state.context.state_store.record_audit_event(
             calendar_id=restored.calendar_id,
             uid=restored.uid,
@@ -448,6 +483,9 @@ def create_app() -> FastAPI:
             details={
                 "audit_id": request.audit_id,
                 "title": restored.summary,
+                "expected_etag": expected_etag,
+                "before_undo_etag": current_event.etag,
+                "after_undo_etag": restored.etag,
             },
         )
         return {"message": "undo applied", "event": restored.to_dict()}
