@@ -59,6 +59,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 修复 stage 镜像 Duplicate UID 导致整轮同步失败 | `avocado/caldav_client.py`, `avocado/sync_engine.py` | `upsert_event` 在 UID 冲突时新增时间窗口检索回退；stage 镜像写入遇到 `calobjects_by_uid_index` 冲突时自动执行“删除同 UID + 重试一次”，失败则跳过单条并记录审计，不再中断整轮同步 | 风险低；极端情况下仅跳过单条 stage 镜像事件，不影响 user-layer 主写入链路 | AVO-032 |
 | 2026-02-27 | 修复 user_intent 跨层未生效：源日历意图自动同步到用户层 | `avocado/sync_engine.py`, `tests/test_sync_engine_helpers.py` | 当用户在 `personal/intake` 等非 stage 源日历更新 `user_intent` 时，系统会同步到对应 user-layer 事件并触发重排；减少 `ai_change_skipped_no_intent` 误跳过 | 风险低；仅增强意图同步，不改变既有锁定/冲突策略 | AVO-031 |
 | 2026-02-27 | AI 修改条目默认精简展示 | `avocado/web_admin.py`, `avocado/static/admin.js` | AI 修改条目列表默认 `limit` 下调为 15（前后端一致），避免日志页一次性列出过多条目导致页面过长 | 风险低；仅默认展示数量调整，不影响历史数据存储与接口兼容 | AVO-030 |
 | 2026-02-27 | 修复 AI 修改记录空白展示（旧审计兼容回退） | `avocado/web_admin.py`, `avocado/sync_engine.py`, `avocado/static/admin.js`, `tests/test_web_admin.py` | `GET /api/ai/changes` 对旧审计记录增加回退：标题回退到 UID、时间尝试从 patch/当前事件补全、原因缺失时给出可读提示；过滤“无实际字段变化”的记录；同步侧新增 `ai_change_skipped_no_effect`，避免写入空变更记录 | 风险低；仅展示层与审计记录过滤增强，不影响同步主流程 | AVO-029 |
@@ -99,6 +100,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-032 | Stage 镜像 UID 冲突容错修复 | Done | 出现 `calobjects_by_uid_index` 冲突时不会导致整轮同步报错；系统会尝试修复冲突并继续后续事件处理 | P0 | AVO-022 | 2026-02-27 |
 | AVO-031 | 源日历 user_intent 自动同步到 user-layer | Done | 在非 stage 日历修改 `user_intent` 后下一轮同步会将意图写入 user-layer 对应事件，并参与 AI 重排，不再被 `no_intent` 跳过 | P0 | AVO-022, AVO-020 | 2026-02-27 |
 | AVO-030 | AI 修改条目默认展示数量精简 | Done | AI 修改条目默认展示最近 15 条，页面不再一次性铺满全部历史记录 | P2 | AVO-024 | 2026-02-27 |
 | AVO-029 | AI 修改记录旧审计兼容回退展示 | Done | 历史记录缺少标题/时间/原因时仍可显示 UID、可读原因与身份信息，不再出现整页 `(Untitled)` 和 `- -> -` | P1 | AVO-024 | 2026-02-27 |

@@ -266,6 +266,13 @@ class CalDAVService:
                 # Some CalDAV backends may race on UID uniqueness checks.
                 try:
                     existing = self._find_resource_by_uid(calendar, event.uid)
+                    if existing is None:
+                        existing = self._find_resource_by_uid_in_range(
+                            calendar,
+                            event.uid,
+                            event.start,
+                            event.end,
+                        )
                     if existing is not None:
                         existing.data = raw_ical
                         existing.save()
@@ -302,6 +309,26 @@ class CalDAVService:
                     return resource
         except Exception:
             pass
+        return None
+
+    def _find_resource_by_uid_in_range(
+        self,
+        calendar: Any,
+        uid: str,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> Any:
+        if not uid or start is None or end is None:
+            return None
+        try:
+            begin = start - timedelta(days=7)
+            finish = end + timedelta(days=7)
+            for resource in calendar.date_search(start=begin, end=finish, expand=True):
+                candidate_uid = _extract_uid_from_raw_ical(getattr(resource, "data", ""))
+                if candidate_uid == uid:
+                    return resource
+        except Exception:
+            return None
         return None
 
     def delete_event(self, calendar_id: str, uid: str = "", href: str = "") -> bool:

@@ -857,12 +857,55 @@ class SyncEngine:
 
             # Stage layer holds AI-processed baseline for next diff.
             for user_event in mutable_events.values():
-                self._mirror_to_staging(
-                    caldav_service=caldav_service,
-                    staging_calendar_id=staging_info.calendar_id,
-                    source_event=user_event,
-                    preserve_uid=True,
-                )
+                try:
+                    self._mirror_to_staging(
+                        caldav_service=caldav_service,
+                        staging_calendar_id=staging_info.calendar_id,
+                        source_event=user_event,
+                        preserve_uid=True,
+                    )
+                except Exception as exc:
+                    err_text = str(exc)
+                    duplicate_uid_error = (
+                        "Duplicate entry" in err_text
+                        or "Integrity constraint violation" in err_text
+                        or "calobjects_by_uid_index" in err_text
+                    )
+                    if not duplicate_uid_error:
+                        raise
+                    delete_ok = caldav_service.delete_event(
+                        staging_info.calendar_id,
+                        uid=user_event.uid,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=staging_info.calendar_id,
+                        uid=user_event.uid,
+                        action="repair_stage_duplicate_uid",
+                        details={
+                            "trigger": trigger,
+                            "delete_ok": delete_ok,
+                        },
+                    )
+                    if not delete_ok:
+                        continue
+                    try:
+                        self._mirror_to_staging(
+                            caldav_service=caldav_service,
+                            staging_calendar_id=staging_info.calendar_id,
+                            source_event=user_event,
+                            preserve_uid=True,
+                        )
+                    except Exception as retry_exc:
+                        self.state_store.record_audit_event(
+                            calendar_id=staging_info.calendar_id,
+                            uid=user_event.uid,
+                            action="skip_stage_mirror_after_duplicate",
+                            details={
+                                "trigger": trigger,
+                                "error": f"{type(retry_exc).__name__}: {retry_exc}",
+                            },
+                        )
+                        continue
 
             duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             message = f"Processed {len(all_events)} events, {len(normalized_changes)} AI changes."
