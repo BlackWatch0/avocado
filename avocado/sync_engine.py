@@ -812,6 +812,7 @@ class SyncEngine:
                     continue
 
                 before_event = event.clone()
+                preserved_intent = _extract_user_intent(before_event)
                 saved_user_event = caldav_service.upsert_event(event.calendar_id, outcome.event)
                 category = str(change.get("category", "")).strip() or _infer_category(saved_user_event, change)
                 new_description, _, category_changed = set_ai_task_category(
@@ -822,6 +823,15 @@ class SyncEngine:
                 if category_changed:
                     saved_user_event.description = new_description
                     saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
+                if preserved_intent:
+                    repaired_description, _, intent_changed = set_ai_task_user_intent(
+                        saved_user_event.description,
+                        config.task_defaults,
+                        preserved_intent,
+                    )
+                    if intent_changed:
+                        saved_user_event.description = repaired_description
+                        saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
                 patch_fields = _event_patch(before_event, saved_user_event)
                 if not patch_fields:
                     self.state_store.record_audit_event(
