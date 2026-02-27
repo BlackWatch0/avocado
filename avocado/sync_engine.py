@@ -63,6 +63,77 @@ def _collapse_nested_managed_uid(uid: str) -> str:
     return ":".join(parts[depth - 1 :])
 
 
+def _load_managed_calendar_id_history(state_store: StateStore) -> set[str]:
+    raw_value = state_store.get_meta("managed_calendar_ids")
+    if not raw_value:
+        return set()
+    try:
+        data = json.loads(raw_value)
+    except Exception:
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return {str(item).strip() for item in data if str(item).strip()}
+
+
+def _persist_managed_calendar_id_history(state_store: StateStore, managed_calendar_ids: set[str]) -> None:
+    payload = sorted({str(item).strip() for item in managed_calendar_ids if str(item).strip()})
+    state_store.set_meta("managed_calendar_ids", json.dumps(payload, ensure_ascii=False))
+
+
+def _is_confirmed_avocado_calendar(calendar_id: str, known_managed_calendar_ids: set[str]) -> bool:
+    return bool(calendar_id and calendar_id in known_managed_calendar_ids)
+
+
+def _purge_duplicate_calendar_events(
+    *,
+    caldav_service: CalDAVService,
+    state_store: StateStore,
+    duplicate_calendars: list[tuple[str, str]],
+    calendar_role: str,
+    known_managed_calendar_ids: set[str],
+    trigger: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> bool:
+    should_replan = False
+    for duplicate_id, duplicate_name in duplicate_calendars:
+        if not _is_confirmed_avocado_calendar(duplicate_id, known_managed_calendar_ids):
+            state_store.record_audit_event(
+                calendar_id=duplicate_id,
+                uid="calendar",
+                action=f"warn_unverified_duplicate_{calendar_role}_calendar",
+                details={
+                    "trigger": trigger,
+                    "duplicate_calendar_name": duplicate_name,
+                    "reason": "calendar_ownership_unverified",
+                },
+            )
+            continue
+
+        duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
+        for duplicate_event in duplicate_events:
+            if not duplicate_event.uid:
+                continue
+            delete_ok = caldav_service.delete_event(
+                duplicate_id,
+                uid=duplicate_event.uid,
+                href=duplicate_event.href,
+            )
+            state_store.record_audit_event(
+                calendar_id=duplicate_id,
+                uid=duplicate_event.uid,
+                action=f"purge_duplicate_{calendar_role}_calendar_event",
+                details={
+                    "trigger": trigger,
+                    "delete_ok": delete_ok,
+                    "duplicate_calendar_name": duplicate_name,
+                },
+            )
+            should_replan = True
+    return should_replan
+
+
 def _event_fingerprint(event: EventRecord) -> str:
     return _hash_text(
         f"{event.summary}|{event.description}|{event.location}|"
@@ -243,6 +314,7 @@ class SyncEngine:
             }
             managed_name_keys.discard("")
             managed_calendar_ids = {staging_info.calendar_id, user_info.calendar_id, intake_info.calendar_id}
+            known_managed_calendar_ids = _load_managed_calendar_id_history(self.state_store) | managed_calendar_ids
             for calendar in calendars:
                 if calendar.calendar_id in managed_calendar_ids:
                     continue
@@ -262,6 +334,8 @@ class SyncEngine:
                             "reason": "same_name_as_managed_calendar",
                         },
                     )
+            known_managed_calendar_ids |= managed_calendar_ids
+            _persist_managed_calendar_id_history(self.state_store, known_managed_calendar_ids)
 
             suggested_immutable = caldav_service.suggest_immutable_calendar_ids(
                 calendars, config.calendar_rules.immutable_keywords
@@ -316,71 +390,41 @@ class SyncEngine:
                 elif normalized_intake_name and name_key == normalized_intake_name:
                     duplicate_intake_calendars.append((calendar.calendar_id, calendar.name))
 
-            for duplicate_id, duplicate_name in duplicate_user_calendars:
-                duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
-                for duplicate_event in duplicate_events:
-                    if not duplicate_event.uid:
-                        continue
-                    delete_ok = caldav_service.delete_event(
-                        duplicate_id,
-                        uid=duplicate_event.uid,
-                        href=duplicate_event.href,
-                    )
-                    self.state_store.record_audit_event(
-                        calendar_id=duplicate_id,
-                        uid=duplicate_event.uid,
-                        action="purge_duplicate_user_calendar_event",
-                        details={
-                            "trigger": trigger,
-                            "delete_ok": delete_ok,
-                            "duplicate_calendar_name": duplicate_name,
-                        },
-                    )
-                    should_replan = True
+            if _purge_duplicate_calendar_events(
+                caldav_service=caldav_service,
+                state_store=self.state_store,
+                duplicate_calendars=duplicate_user_calendars,
+                calendar_role="user",
+                known_managed_calendar_ids=known_managed_calendar_ids,
+                trigger=trigger,
+                window_start=window_start,
+                window_end=window_end,
+            ):
+                should_replan = True
 
-            for duplicate_id, duplicate_name in duplicate_stage_calendars:
-                duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
-                for duplicate_event in duplicate_events:
-                    if not duplicate_event.uid:
-                        continue
-                    delete_ok = caldav_service.delete_event(
-                        duplicate_id,
-                        uid=duplicate_event.uid,
-                        href=duplicate_event.href,
-                    )
-                    self.state_store.record_audit_event(
-                        calendar_id=duplicate_id,
-                        uid=duplicate_event.uid,
-                        action="purge_duplicate_stage_calendar_event",
-                        details={
-                            "trigger": trigger,
-                            "delete_ok": delete_ok,
-                            "duplicate_calendar_name": duplicate_name,
-                        },
-                    )
-                    should_replan = True
+            if _purge_duplicate_calendar_events(
+                caldav_service=caldav_service,
+                state_store=self.state_store,
+                duplicate_calendars=duplicate_stage_calendars,
+                calendar_role="stage",
+                known_managed_calendar_ids=known_managed_calendar_ids,
+                trigger=trigger,
+                window_start=window_start,
+                window_end=window_end,
+            ):
+                should_replan = True
 
-            for duplicate_id, duplicate_name in duplicate_intake_calendars:
-                duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
-                for duplicate_event in duplicate_events:
-                    if not duplicate_event.uid:
-                        continue
-                    delete_ok = caldav_service.delete_event(
-                        duplicate_id,
-                        uid=duplicate_event.uid,
-                        href=duplicate_event.href,
-                    )
-                    self.state_store.record_audit_event(
-                        calendar_id=duplicate_id,
-                        uid=duplicate_event.uid,
-                        action="purge_duplicate_intake_calendar_event",
-                        details={
-                            "trigger": trigger,
-                            "delete_ok": delete_ok,
-                            "duplicate_calendar_name": duplicate_name,
-                        },
-                    )
-                    should_replan = True
+            if _purge_duplicate_calendar_events(
+                caldav_service=caldav_service,
+                state_store=self.state_store,
+                duplicate_calendars=duplicate_intake_calendars,
+                calendar_role="intake",
+                known_managed_calendar_ids=known_managed_calendar_ids,
+                trigger=trigger,
+                window_start=window_start,
+                window_end=window_end,
+            ):
+                should_replan = True
 
             stage_events = caldav_service.fetch_events(
                 staging_info.calendar_id, window_start, window_end
