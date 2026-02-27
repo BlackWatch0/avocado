@@ -261,6 +261,9 @@ def create_app() -> FastAPI:
             current_config.calendar_rules.staging_calendar_id,
             current_config.calendar_rules.user_calendar_id,
             current_config.calendar_rules.intake_calendar_id,
+            request.staging_calendar_id,
+            request.user_calendar_id,
+            request.intake_calendar_id,
         }
         reserved_calendar_ids = {cid for cid in reserved_calendar_ids if str(cid).strip()}
 

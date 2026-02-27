@@ -100,6 +100,33 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(rules["per_calendar_defaults"]["cal-1"]["mode"], "immutable")
         self.assertTrue(rules["per_calendar_defaults"]["cal-1"]["locked"])
 
+    def test_put_calendar_rules_filters_reserved_calendars(self) -> None:
+        payload = {
+            "immutable_keywords": ["fixed"],
+            "immutable_calendar_ids": ["stage-id", "user-id", "intake-id", "cal-3"],
+            "staging_calendar_id": "stage-id",
+            "staging_calendar_name": "stage",
+            "user_calendar_id": "user-id",
+            "user_calendar_name": "user",
+            "intake_calendar_id": "intake-id",
+            "intake_calendar_name": "intake",
+            "per_calendar_defaults": {
+                "stage-id": {"mode": "immutable", "locked": True, "mandatory": True},
+                "user-id": {"mode": "immutable", "locked": True, "mandatory": True},
+                "intake-id": {"mode": "immutable", "locked": True, "mandatory": True},
+                "cal-3": {"mode": "immutable", "locked": True, "mandatory": True},
+            },
+        }
+        resp = self.client.put("/api/calendar-rules", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        rules = resp.json()["calendar_rules"]
+        self.assertEqual(rules["immutable_calendar_ids"], ["cal-3"])
+        self.assertNotIn("stage-id", rules["per_calendar_defaults"])
+        self.assertNotIn("user-id", rules["per_calendar_defaults"])
+        self.assertNotIn("intake-id", rules["per_calendar_defaults"])
+        self.assertIn("cal-3", rules["per_calendar_defaults"])
+        self.assertFalse(rules["per_calendar_defaults"]["cal-3"]["mandatory"])
+
     def test_ai_connectivity_api(self) -> None:
         with mock.patch(
             "avocado.web_admin.OpenAICompatibleClient.test_connectivity",
