@@ -1,0 +1,35 @@
+caldav:
+  base_url: "https://your-caldav-server.example.com/dav"
+  username: "your-username"
+  password: "your-password"
+
+ai:
+  base_url: "https://api.openai.com/v1"
+  api_key: "sk-..."
+  model: "gpt-4o-mini"
+  timeout_seconds: 90
+
+sync:
+  window_days: 7
+  interval_seconds: 300
+  timezone: "UTC"
+
+calendar_rules:
+  immutable_keywords:
+    - "fixed"
+    - "work"
+    - "固定"
+  immutable_calendar_ids: []
+  staging_calendar_id: ""
+  staging_calendar_name: "Avocado AI Staging"
+
+task_defaults:
+  locked: false
+  mandatory: false
+  editable_fields:
+    - start
+    - end
+    - summary
+    - location
+    - description
+
