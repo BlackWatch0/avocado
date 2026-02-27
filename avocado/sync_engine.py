@@ -19,7 +19,7 @@ from avocado.models import (
 from avocado.planner import build_messages, build_planning_payload, normalize_changes
 from avocado.reconciler import apply_change
 from avocado.state_store import StateStore
-from avocado.task_block import ensure_ai_task_block, set_ai_task_category
+from avocado.task_block import ensure_ai_task_block, parse_ai_task_block, set_ai_task_category
 
 
 def _hash_text(value: str) -> str:
@@ -62,6 +62,26 @@ def _event_fingerprint(event: EventRecord) -> str:
         f"{event.summary}|{event.description}|{event.location}|"
         f"{serialize_datetime(event.start)}|{serialize_datetime(event.end)}"
     )
+
+
+def _event_has_user_intent(event: EventRecord) -> bool:
+    parsed = parse_ai_task_block(event.description or "")
+    if isinstance(parsed, dict):
+        return bool(str(parsed.get("user_intent", "")).strip())
+
+    # Fallback for manually edited blocks that are temporarily invalid YAML.
+    description = event.description or ""
+    block_match = re.search(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", description, re.DOTALL)
+    if not block_match:
+        return False
+    raw_block = block_match.group(1)
+    intent_match = re.search(r"^\s*user_intent\s*:\s*(.+)\s*$", raw_block, re.MULTILINE)
+    if not intent_match:
+        return False
+    value = intent_match.group(1).strip()
+    if value in {"", "\"\"", "''", "null", "None", "~"}:
+        return False
+    return True
 
 
 def _infer_category(event: EventRecord, change: dict[str, Any]) -> str:
@@ -555,6 +575,15 @@ class SyncEngine:
                             "calendar_id": change.get("calendar_id"),
                             "uid": change.get("uid"),
                         },
+                    )
+                    continue
+
+                if not _event_has_user_intent(event):
+                    self.state_store.record_audit_event(
+                        calendar_id=event.calendar_id,
+                        uid=event.uid,
+                        action="ai_change_skipped_no_intent",
+                        details={"trigger": trigger},
                     )
                     continue
 

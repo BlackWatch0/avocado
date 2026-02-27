@@ -1,7 +1,9 @@
 import unittest
 
+from avocado.models import EventRecord
 from avocado.sync_engine import (
     _collapse_nested_managed_uid,
+    _event_has_user_intent,
     _managed_uid_prefix_depth,
     _normalize_calendar_name,
 )
@@ -28,6 +30,28 @@ class SyncEngineHelperTests(unittest.TestCase):
             "cccccccccc:uid",
         )
         self.assertEqual(_collapse_nested_managed_uid("76044593b8:plain-uid"), "76044593b8:plain-uid")
+
+    def test_event_has_user_intent(self) -> None:
+        event_without_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-1",
+            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent: \"\"\n[/AI Task]",
+        )
+        event_with_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-2",
+            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent: \"挪到午饭前\"\n[/AI Task]",
+        )
+        self.assertFalse(_event_has_user_intent(event_without_intent))
+        self.assertTrue(_event_has_user_intent(event_with_intent))
+
+    def test_event_has_user_intent_with_invalid_yaml_fallback(self) -> None:
+        event_with_non_yaml_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-3",
+            description="[AI Task]\nuser_intent: 挪到吃饭前，下午3点左右:)\n[/AI Task]",
+        )
+        self.assertTrue(_event_has_user_intent(event_with_non_yaml_intent))
 
 
 if __name__ == "__main__":
