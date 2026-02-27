@@ -122,8 +122,12 @@ Admin page behavior:
   - default locked
   - default mandatory
 - AI Base URL defaults to `https://api.openai.com/v1`
+- AI connectivity test is available as a blue inline link directly below AI Base URL
 - AI system prompt can be edited directly in admin page
 - timezone uses dropdown selection (with custom fallback option when needed)
+- admin page supports English/Chinese UI:
+  - default language follows browser language
+  - manual override available from the language selector in header
 - `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
 

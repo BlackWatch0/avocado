@@ -22,6 +22,26 @@ body {
   gap: 12px;
 }
 
+.top-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lang-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.lang-switch select {
+  width: auto;
+  margin-top: 0;
+  min-width: 110px;
+}
+
 .actions {
   display: flex;
   gap: 10px;
@@ -120,6 +140,21 @@ textarea {
   font-size: 14px;
 }
 
+.inline-link-wrap {
+  margin: -4px 0 10px;
+}
+
+.inline-link {
+  color: #2563eb;
+  text-decoration: underline;
+  font-size: 13px;
+}
+
+.inline-link[aria-disabled="true"] {
+  color: #64748b;
+  pointer-events: none;
+}
+
 .checkbox {
   display: flex;
   align-items: center;
@@ -163,5 +198,14 @@ code {
   .top {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .top-right {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .lang-switch {
+    justify-content: space-between;
   }
 }

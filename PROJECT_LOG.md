@@ -36,6 +36,7 @@
 - `[AI Task]` 至少包含字段: `locked`、`mandatory`、`editable_fields`、`user_intent`、`updated_at`。
 - 用户层事件 UID 使用 namespaced 格式；若遇到历史 UID 冲突，写入会跳过并记录 `skip_seed_uid_conflict` 审计事件。
 - 若存在同名托管日历（stage/user）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
+- 管理页面支持中英文双语；默认按浏览器语言自动选择，用户可手动切换并持久化偏好。
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
   - AI: `base_url`、`api_key`、`model`
@@ -57,6 +58,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 管理页体验改进：AI测试改为行内链接 + 中英文切换 | `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css`, `README.md` | 移除顶部 AI 测试按钮，将 AI 测试入口改为 AI Base URL 下方蓝色超链接；新增中英文界面，默认按浏览器语言自动切换并支持手动覆盖 | 风险低；仅前端展示与交互调整，不影响后端 API 协议 | AVO-019 |
 | 2026-02-27 | 修复重复日历放大问题：同名托管副本隔离 + 冲突写入降级 | `avocado/sync_engine.py`, `avocado/caldav_client.py`, `avocado/web_admin.py`, `tests/test_sync_engine_helpers.py`, `tests/test_web_admin.py` | 同名托管副本日历不再作为源日历参与复制，并自动清理其窗口内事件；遇到 UID 唯一键冲突时降级为跳过并记录审计，避免整轮同步失败；管理页可标记 `managed_duplicate` 日历 | 风险中等；会清理同名副本日历窗口内事件，必要时可回滚版本并从 CalDAV 服务端恢复 | AVO-018 |
 | 2026-02-27 | 修复用户层日程重复：旧UID迁移去重与删除回退 | `avocado/sync_engine.py`, `avocado/caldav_client.py` | 迁移旧UID后立即从本轮 `user_map` 移除旧事件，避免同轮重复处理；删除旧事件时支持 `href -> uid` 回退查找，提升旧事件清理成功率 | 风险低；若个别 CalDAV 服务仍拒绝删除，可回滚此变更并保留日志定位 | AVO-017 |
 | 2026-02-27 | 增加用户层日历保证与管理页运行日志查询 | `avocado/models.py`, `avocado/web_admin.py`, `avocado/sync_engine.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css`, `config.example.yaml`, `tests/test_models.py`, `README.md` | 新增 `user_calendar_id/user_calendar_name` 并在后端自动确保用户层日历存在；管理页新增同步日志与审计日志查询面板 | 风险低；日志查询为只读能力，不影响同步写入流程 | AVO-016 |
@@ -84,6 +86,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-019 | 管理页中英文切换与 AI 测试入口改版 | Done | AI 测试入口位于 AI Base URL 下方并为超链接样式；页面支持浏览器语言自动切换中英文并可手动修改 | P1 | AVO-014 | 2026-02-27 |
 | AVO-018 | 修复同名托管日历导致的重复扩散 | Done | 同名 user/stage 副本日历不会再参与源数据复制且会清理窗口内副本事件；UID 冲突不会导致整轮同步失败；管理页可识别重复托管日历 | P0 | AVO-017 | 2026-02-27 |
 | AVO-017 | 修复用户层日程重复（UID迁移） | Done | 旧 plain UID 迁移为 namespaced UID 后不再出现同轮双记录；旧事件删除支持回退策略 | P0 | AVO-016 | 2026-02-27 |
 | AVO-016 | 用户层日历自动确保 + 管理页日志查询 | Done | 系统自动确保 user-layer 日历存在并在管理页可识别；管理页可查询同步运行日志与审计日志 | P1 | AVO-015 | 2026-02-27 |

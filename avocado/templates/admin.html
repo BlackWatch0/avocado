@@ -1,4 +1,4 @@
-ï»¿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -9,45 +9,60 @@
 <body>
   <main class="page">
     <header class="top">
-      <h1>Avocado Admin</h1>
-      <div class="actions">
-        <button id="test-ai-btn" type="button">Test AI API</button>
-        <button id="sync-btn" type="button">Run Sync</button>
-        <button id="refresh-calendars-btn" type="button">Refresh Calendars</button>
-        <button id="save-btn" type="button">Save Config</button>
+      <h1 data-i18n="page.title">Avocado Admin</h1>
+      <div class="top-right">
+        <label class="lang-switch">
+          <span data-i18n="lang.label">Language</span>
+          <select id="lang-select">
+            <option value="auto">Auto</option>
+            <option value="en">English</option>
+            <option value="zh">ÖÐÎÄ</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button id="sync-btn" type="button" data-i18n="action.run_sync">Run Sync</button>
+          <button id="refresh-calendars-btn" type="button" data-i18n="action.refresh_calendars">Refresh Calendars</button>
+          <button id="save-btn" type="button" data-i18n="action.save_config">Save Config</button>
+        </div>
       </div>
     </header>
 
-    <section id="status" class="status info">Loading config...</section>
+    <section id="status" class="status info" data-i18n="status.loading_config">Loading config...</section>
 
     <nav class="tabs">
-      <button id="tab-config" type="button" class="tab active">Config</button>
-      <button id="tab-calendars" type="button" class="tab">Calendars</button>
-      <button id="tab-logs" type="button" class="tab">Logs</button>
+      <button id="tab-config" type="button" class="tab active" data-i18n="tab.config">Config</button>
+      <button id="tab-calendars" type="button" class="tab" data-i18n="tab.calendars">Calendars</button>
+      <button id="tab-logs" type="button" class="tab" data-i18n="tab.logs">Logs</button>
     </nav>
 
     <form id="config-form">
       <section class="card" data-panel="config">
-        <h2>CalDAV</h2>
-        <label>Base URL<input id="caldav-base-url" type="text" required></label>
-        <label>Username<input id="caldav-username" type="text" required></label>
-        <label>Password<input id="caldav-password" type="password" placeholder="Leave empty to keep current"></label>
+        <h2 data-i18n="section.caldav">CalDAV</h2>
+        <label><span data-i18n="field.base_url">Base URL</span><input id="caldav-base-url" type="text" required></label>
+        <label><span data-i18n="field.username">Username</span><input id="caldav-username" type="text" required></label>
+        <label><span data-i18n="field.password">Password</span><input id="caldav-password" type="password" data-i18n-placeholder="placeholder.keep_secret"></label>
       </section>
 
       <section class="card" data-panel="config">
-        <h2>AI</h2>
-        <label>Base URL<input id="ai-base-url" type="text" required></label>
-        <label>API Key<input id="ai-api-key" type="password" placeholder="Leave empty to keep current"></label>
-        <label>Model<input id="ai-model" type="text" required></label>
-        <label>Timeout Seconds<input id="ai-timeout-seconds" type="number" min="1" required></label>
-        <label>System Prompt<textarea id="ai-system-prompt" rows="10"></textarea></label>
+        <h2 data-i18n="section.ai">AI</h2>
+        <label>
+          <span data-i18n="field.base_url">Base URL</span>
+          <input id="ai-base-url" type="text" required>
+        </label>
+        <div class="inline-link-wrap">
+          <a id="ai-test-link" href="#" class="inline-link" data-i18n="ai.test_link">Test AI API connectivity</a>
+        </div>
+        <label><span data-i18n="field.api_key">API Key</span><input id="ai-api-key" type="password" data-i18n-placeholder="placeholder.keep_secret"></label>
+        <label><span data-i18n="field.model">Model</span><input id="ai-model" type="text" required></label>
+        <label><span data-i18n="field.timeout_seconds">Timeout Seconds</span><input id="ai-timeout-seconds" type="number" min="1" required></label>
+        <label><span data-i18n="field.system_prompt">System Prompt</span><textarea id="ai-system-prompt" rows="10"></textarea></label>
       </section>
 
       <section class="card" data-panel="config">
-        <h2>Sync</h2>
-        <label>Window Days<input id="sync-window-days" type="number" min="1" required></label>
-        <label>Interval Seconds<input id="sync-interval-seconds" type="number" min="30" required></label>
-        <label>Timezone
+        <h2 data-i18n="section.sync">Sync</h2>
+        <label><span data-i18n="field.window_days">Window Days</span><input id="sync-window-days" type="number" min="1" required></label>
+        <label><span data-i18n="field.interval_seconds">Interval Seconds</span><input id="sync-interval-seconds" type="number" min="30" required></label>
+        <label><span data-i18n="field.timezone">Timezone</span>
           <select id="sync-timezone" required>
             <option value="UTC">UTC</option>
             <option value="Asia/Shanghai">Asia/Shanghai</option>
@@ -72,33 +87,33 @@
       </section>
 
       <section class="card" data-panel="config">
-        <h2>Calendar Rules</h2>
-        <label>Immutable Keywords (comma separated)<input id="rules-immutable-keywords" type="text"></label>
-        <label>Immutable Calendar IDs (auto-filled from calendar table)<textarea id="rules-immutable-calendar-ids" rows="4" readonly></textarea></label>
-        <label>Staging Calendar ID<input id="rules-staging-calendar-id" type="text"></label>
-        <label>Staging Calendar Name<input id="rules-staging-calendar-name" type="text"></label>
-        <label>User Calendar ID<input id="rules-user-calendar-id" type="text"></label>
-        <label>User Calendar Name<input id="rules-user-calendar-name" type="text"></label>
+        <h2 data-i18n="section.calendar_rules">Calendar Rules</h2>
+        <label><span data-i18n="field.immutable_keywords">Immutable Keywords (comma separated)</span><input id="rules-immutable-keywords" type="text"></label>
+        <label><span data-i18n="field.immutable_calendar_ids">Immutable Calendar IDs (auto-filled from calendar table)</span><textarea id="rules-immutable-calendar-ids" rows="4" readonly></textarea></label>
+        <label><span data-i18n="field.staging_calendar_id">Staging Calendar ID</span><input id="rules-staging-calendar-id" type="text"></label>
+        <label><span data-i18n="field.staging_calendar_name">Staging Calendar Name</span><input id="rules-staging-calendar-name" type="text"></label>
+        <label><span data-i18n="field.user_calendar_id">User Calendar ID</span><input id="rules-user-calendar-id" type="text"></label>
+        <label><span data-i18n="field.user_calendar_name">User Calendar Name</span><input id="rules-user-calendar-name" type="text"></label>
       </section>
 
       <section class="card" data-panel="config">
-        <h2>Task Defaults</h2>
-        <label class="checkbox"><input id="task-locked" type="checkbox"> Locked</label>
-        <label class="checkbox"><input id="task-mandatory" type="checkbox"> Mandatory</label>
-        <label>Editable Fields (comma separated)<input id="task-editable-fields" type="text"></label>
+        <h2 data-i18n="section.task_defaults">Task Defaults</h2>
+        <label class="checkbox"><input id="task-locked" type="checkbox"> <span data-i18n="field.locked">Locked</span></label>
+        <label class="checkbox"><input id="task-mandatory" type="checkbox"> <span data-i18n="field.mandatory">Mandatory</span></label>
+        <label><span data-i18n="field.editable_fields">Editable Fields (comma separated)</span><input id="task-editable-fields" type="text"></label>
       </section>
 
       <section class="card wide" data-panel="calendars">
-        <h2>Calendars (from CalDAV)</h2>
-        <p class="muted">Click Sync or Refresh Calendars to load latest list from server.</p>
+        <h2 data-i18n="section.calendars">Calendars (from CalDAV)</h2>
+        <p class="muted" data-i18n="hint.refresh_calendars">Click Sync or Refresh Calendars to load latest list from server.</p>
         <div class="table-wrap">
           <table id="calendar-behaviors-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Immutable</th>
-                <th>Default Locked</th>
-                <th>Default Mandatory</th>
+                <th data-i18n="table.name">Name</th>
+                <th data-i18n="table.immutable">Immutable</th>
+                <th data-i18n="table.default_locked">Default Locked</th>
+                <th data-i18n="table.default_mandatory">Default Mandatory</th>
               </tr>
             </thead>
             <tbody id="calendar-behaviors-body"></tbody>
@@ -107,21 +122,21 @@
       </section>
 
       <section class="card wide" data-panel="logs">
-        <h2>Run Logs</h2>
+        <h2 data-i18n="section.logs">Run Logs</h2>
         <div class="actions in-card">
-          <button id="refresh-sync-logs-btn" type="button">Refresh Sync Logs</button>
-          <button id="refresh-audit-logs-btn" type="button">Refresh Audit Logs</button>
+          <button id="refresh-sync-logs-btn" type="button" data-i18n="action.refresh_sync_logs">Refresh Sync Logs</button>
+          <button id="refresh-audit-logs-btn" type="button" data-i18n="action.refresh_audit_logs">Refresh Audit Logs</button>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Run At</th>
-                <th>Status</th>
-                <th>Trigger</th>
-                <th>Changes</th>
-                <th>Conflicts</th>
-                <th>Message</th>
+                <th data-i18n="table.run_at">Run At</th>
+                <th data-i18n="table.status">Status</th>
+                <th data-i18n="table.trigger">Trigger</th>
+                <th data-i18n="table.changes">Changes</th>
+                <th data-i18n="table.conflicts">Conflicts</th>
+                <th data-i18n="table.message">Message</th>
               </tr>
             </thead>
             <tbody id="sync-logs-body"></tbody>
@@ -131,11 +146,11 @@
           <table>
             <thead>
               <tr>
-                <th>Created At</th>
-                <th>Action</th>
-                <th>Calendar</th>
-                <th>UID</th>
-                <th>Details</th>
+                <th data-i18n="table.created_at">Created At</th>
+                <th data-i18n="table.action">Action</th>
+                <th data-i18n="table.calendar">Calendar</th>
+                <th data-i18n="table.uid">UID</th>
+                <th data-i18n="table.details">Details</th>
               </tr>
             </thead>
             <tbody id="audit-logs-body"></tbody>
