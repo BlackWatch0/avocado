@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from avocado.ai_client import OpenAICompatibleClient
 from avocado.caldav_client import CalDAVService
 from avocado.config_manager import ConfigManager
+from avocado.models import parse_iso_datetime
 from avocado.scheduler import SyncScheduler
 from avocado.state_store import StateStore
 from avocado.sync_engine import SyncEngine
@@ -29,7 +30,14 @@ class CalendarRulesUpdateRequest(BaseModel):
     staging_calendar_name: str | None = None
     user_calendar_id: str = ""
     user_calendar_name: str | None = None
+    intake_calendar_id: str = ""
+    intake_calendar_name: str | None = None
     per_calendar_defaults: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class CustomWindowSyncRequest(BaseModel):
+    start: str
+    end: str
 
 
 class AppContext:
@@ -149,11 +157,17 @@ def create_app() -> FastAPI:
                     config.calendar_rules.user_calendar_id,
                     config.calendar_rules.user_calendar_name,
                 )
+                intake_info = service.ensure_staging_calendar(
+                    config.calendar_rules.intake_calendar_id,
+                    config.calendar_rules.intake_calendar_name,
+                )
                 updates: dict[str, Any] = {"calendar_rules": {}}
                 if config.calendar_rules.staging_calendar_id != stage_info.calendar_id:
                     updates["calendar_rules"]["staging_calendar_id"] = stage_info.calendar_id
                 if config.calendar_rules.user_calendar_id != user_info.calendar_id:
                     updates["calendar_rules"]["user_calendar_id"] = user_info.calendar_id
+                if config.calendar_rules.intake_calendar_id != intake_info.calendar_id:
+                    updates["calendar_rules"]["intake_calendar_id"] = intake_info.calendar_id
                 if updates["calendar_rules"]:
                     app.state.context.config_manager.update(updates)
                     config = app.state.context.config_manager.load()
@@ -167,6 +181,7 @@ def create_app() -> FastAPI:
         output = []
         stage_name_key = _normalize_name(config.calendar_rules.staging_calendar_name)
         user_name_key = _normalize_name(config.calendar_rules.user_calendar_name)
+        intake_name_key = _normalize_name(config.calendar_rules.intake_calendar_name)
         per_calendar_defaults = config.calendar_rules.per_calendar_defaults
         immutable_explicit = set(config.calendar_rules.immutable_calendar_ids)
         editable_override = {
@@ -189,16 +204,20 @@ def create_app() -> FastAPI:
             item["immutable_selected"] = immutable_selected
             item["is_staging"] = cal.calendar_id == config.calendar_rules.staging_calendar_id
             item["is_user"] = cal.calendar_id == config.calendar_rules.user_calendar_id
+            item["is_intake"] = cal.calendar_id == config.calendar_rules.intake_calendar_id
             name_key = _normalize_name(cal.name)
             item["managed_duplicate"] = False
             item["managed_duplicate_role"] = ""
-            if not item["is_staging"] and not item["is_user"]:
+            if not item["is_staging"] and not item["is_user"] and not item["is_intake"]:
                 if stage_name_key and name_key == stage_name_key:
                     item["managed_duplicate"] = True
                     item["managed_duplicate_role"] = "staging"
                 elif user_name_key and name_key == user_name_key:
                     item["managed_duplicate"] = True
                     item["managed_duplicate_role"] = "user"
+                elif intake_name_key and name_key == intake_name_key:
+                    item["managed_duplicate"] = True
+                    item["managed_duplicate_role"] = "intake"
             item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
             item["default_mandatory"] = bool(behavior.get("mandatory", config.task_defaults.mandatory))
             item["mode"] = "immutable" if immutable_selected else "editable"
@@ -213,6 +232,7 @@ def create_app() -> FastAPI:
                 "immutable_calendar_ids": request.immutable_calendar_ids,
                 "staging_calendar_id": request.staging_calendar_id,
                 "user_calendar_id": request.user_calendar_id,
+                "intake_calendar_id": request.intake_calendar_id,
                 "per_calendar_defaults": request.per_calendar_defaults,
             }
         }
@@ -220,6 +240,8 @@ def create_app() -> FastAPI:
             payload["calendar_rules"]["staging_calendar_name"] = request.staging_calendar_name
         if request.user_calendar_name is not None:
             payload["calendar_rules"]["user_calendar_name"] = request.user_calendar_name
+        if request.intake_calendar_name is not None:
+            payload["calendar_rules"]["intake_calendar_name"] = request.intake_calendar_name
         updated = app.state.context.config_manager.update(payload)
         return {"message": "calendar rules updated", "calendar_rules": updated.calendar_rules.__dict__}
 
@@ -227,6 +249,24 @@ def create_app() -> FastAPI:
     def trigger_sync() -> dict[str, str]:
         app.state.context.scheduler.trigger_manual()
         return {"message": "sync triggered"}
+
+    @app.post("/api/sync/run-window")
+    def trigger_sync_with_custom_window(request: CustomWindowSyncRequest) -> dict[str, Any]:
+        start = parse_iso_datetime(request.start)
+        end = parse_iso_datetime(request.end)
+        if start is None or end is None:
+            raise HTTPException(status_code=400, detail="Invalid start/end datetime")
+        if end < start:
+            raise HTTPException(status_code=400, detail="end must be later than start")
+        result = app.state.context.sync_engine.run_once(
+            trigger="manual-window",
+            window_start_override=start,
+            window_end_override=end,
+        )
+        return {
+            "message": "sync completed",
+            "result": result.to_dict(),
+        }
 
     @app.post("/api/ai/test")
     def test_ai_connectivity() -> dict[str, Any]:

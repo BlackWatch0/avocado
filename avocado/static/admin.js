@@ -2,6 +2,7 @@
 const saveBtn = document.getElementById("save-btn");
 const syncBtn = document.getElementById("sync-btn");
 const refreshCalendarsBtn = document.getElementById("refresh-calendars-btn");
+const customSyncBtn = document.getElementById("custom-sync-btn");
 const aiTestLink = document.getElementById("ai-test-link");
 const refreshSyncLogsBtn = document.getElementById("refresh-sync-logs-btn");
 const refreshAuditLogsBtn = document.getElementById("refresh-audit-logs-btn");
@@ -27,6 +28,7 @@ const I18N = {
     "tab.calendars": "Calendars",
     "tab.logs": "Logs",
     "action.run_sync": "Run Sync",
+    "action.run_custom_sync": "Run Custom Range Sync",
     "action.refresh_calendars": "Refresh Calendars",
     "action.save_config": "Save Config",
     "action.refresh_sync_logs": "Refresh Sync Logs",
@@ -38,6 +40,8 @@ const I18N = {
     "section.task_defaults": "Task Defaults",
     "section.calendars": "Calendars (from CalDAV)",
     "section.logs": "Run Logs",
+    "section.sync_logs": "Sync Runs",
+    "section.audit_logs": "Audit Events",
     "field.base_url": "Base URL",
     "field.username": "Username",
     "field.password": "Password",
@@ -48,12 +52,16 @@ const I18N = {
     "field.window_days": "Window Days",
     "field.interval_seconds": "Interval Seconds",
     "field.timezone": "Timezone",
+    "field.custom_sync_start": "Custom Sync Start",
+    "field.custom_sync_end": "Custom Sync End",
     "field.immutable_keywords": "Immutable Keywords (comma separated)",
     "field.immutable_calendar_ids": "Immutable Calendar IDs (auto-filled from calendar table)",
     "field.staging_calendar_id": "Staging Calendar ID",
     "field.staging_calendar_name": "Staging Calendar Name",
     "field.user_calendar_id": "User Calendar ID",
     "field.user_calendar_name": "User Calendar Name",
+    "field.intake_calendar_id": "Intake Calendar ID",
+    "field.intake_calendar_name": "Intake Calendar Name",
     "field.locked": "Locked",
     "field.mandatory": "Mandatory",
     "field.editable_fields": "Editable Fields (comma separated)",
@@ -83,6 +91,8 @@ const I18N = {
     "status.sync_triggered_refreshed": "Sync triggered and calendars/logs refreshed.",
     "status.refreshing_calendars": "Refreshing calendars...",
     "status.calendars_refreshed": "Calendars refreshed.",
+    "status.triggering_custom_sync": "Triggering custom range sync...",
+    "status.custom_sync_triggered_refreshed": "Custom range sync completed and calendars/logs refreshed.",
     "status.testing_ai": "Testing AI connectivity...",
     "status.ai_ok": "AI connectivity OK. {message}",
     "status.ai_failed": "AI connectivity failed. {message}",
@@ -95,6 +105,8 @@ const I18N = {
     "error.window_days": "window_days must be >= 1",
     "error.interval_seconds": "interval_seconds must be >= 30",
     "error.timeout_seconds": "timeout_seconds must be >= 1",
+    "error.custom_sync_missing": "Please provide both custom sync start and end",
+    "error.custom_sync_range": "Custom sync end must be later than start",
     "error.load_config_failed": "Failed to load config",
     "error.load_calendars_failed": "Failed to load calendars",
     "error.load_sync_logs_failed": "Failed to load sync logs",
@@ -112,7 +124,11 @@ const I18N = {
     "tag.user_layer": "user-layer",
     "tag.duplicate_user": "duplicate-user",
     "tag.duplicate_staging": "duplicate-stage",
-    "common.custom": "custom"
+    "tag.intake": "intake",
+    "tag.duplicate_intake": "duplicate-intake",
+    "common.custom": "custom",
+    "details.view": "View details",
+    "details.empty": "No details"
   },
   zh: {
     "page.title": "Avocado 管理后台",
@@ -124,6 +140,7 @@ const I18N = {
     "tab.calendars": "日历",
     "tab.logs": "日志",
     "action.run_sync": "执行同步",
+    "action.run_custom_sync": "执行自定义时间段同步",
     "action.refresh_calendars": "刷新日历",
     "action.save_config": "保存配置",
     "action.refresh_sync_logs": "刷新同步日志",
@@ -135,6 +152,8 @@ const I18N = {
     "section.task_defaults": "任务默认值",
     "section.calendars": "日历列表（来自 CalDAV）",
     "section.logs": "运行日志",
+    "section.sync_logs": "同步运行日志",
+    "section.audit_logs": "审计事件日志",
     "field.base_url": "Base URL",
     "field.username": "用户名",
     "field.password": "密码",
@@ -145,12 +164,16 @@ const I18N = {
     "field.window_days": "窗口天数",
     "field.interval_seconds": "轮询间隔（秒）",
     "field.timezone": "时区",
+    "field.custom_sync_start": "自定义同步开始时间",
+    "field.custom_sync_end": "自定义同步结束时间",
     "field.immutable_keywords": "不可变关键字（逗号分隔）",
     "field.immutable_calendar_ids": "不可变日历 ID（由日历表自动填充）",
     "field.staging_calendar_id": "Stage 日历 ID",
     "field.staging_calendar_name": "Stage 日历名称",
     "field.user_calendar_id": "用户层日历 ID",
     "field.user_calendar_name": "用户层日历名称",
+    "field.intake_calendar_id": "新日程日历 ID",
+    "field.intake_calendar_name": "新日程日历名称",
     "field.locked": "锁定",
     "field.mandatory": "强制",
     "field.editable_fields": "可编辑字段（逗号分隔）",
@@ -180,6 +203,8 @@ const I18N = {
     "status.sync_triggered_refreshed": "已触发同步并刷新日历/日志。",
     "status.refreshing_calendars": "正在刷新日历...",
     "status.calendars_refreshed": "日历已刷新。",
+    "status.triggering_custom_sync": "正在执行自定义时间段同步...",
+    "status.custom_sync_triggered_refreshed": "自定义时间段同步完成并已刷新日历/日志。",
     "status.testing_ai": "正在测试 AI 连通性...",
     "status.ai_ok": "AI 连通性正常。{message}",
     "status.ai_failed": "AI 连通性失败。{message}",
@@ -192,6 +217,8 @@ const I18N = {
     "error.window_days": "window_days 必须 >= 1",
     "error.interval_seconds": "interval_seconds 必须 >= 30",
     "error.timeout_seconds": "timeout_seconds 必须 >= 1",
+    "error.custom_sync_missing": "请填写自定义同步开始和结束时间",
+    "error.custom_sync_range": "结束时间必须晚于开始时间",
     "error.load_config_failed": "加载配置失败",
     "error.load_calendars_failed": "加载日历失败",
     "error.load_sync_logs_failed": "加载同步日志失败",
@@ -209,7 +236,11 @@ const I18N = {
     "tag.user_layer": "用户层",
     "tag.duplicate_user": "重复用户层",
     "tag.duplicate_staging": "重复stage",
-    "common.custom": "自定义"
+    "tag.intake": "新日程",
+    "tag.duplicate_intake": "重复新日程",
+    "common.custom": "自定义",
+    "details.view": "查看详情",
+    "details.empty": "无详情"
   }
 };
 
@@ -225,6 +256,60 @@ const splitByComma = (text) =>
     .split(",")
     .map((v) => v.trim())
     .filter(Boolean);
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+const shortText = (value, limit = 120) => {
+  const compact = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  if (compact.length <= limit) return compact;
+  return `${compact.slice(0, limit)}...`;
+};
+const toDisplayValue = (value) => (value === null || value === undefined || value === "" ? "-" : String(value));
+const toPrettyJson = (value) => {
+  if (value === null || value === undefined) return "{}";
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "{}";
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch (_err) {
+      return trimmed;
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (_err) {
+    return String(value);
+  }
+};
+const summarizeDetails = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return shortText(value, 150);
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (!entries.length) return "";
+    return shortText(
+      entries
+        .slice(0, 4)
+        .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+        .join(" | "),
+      150
+    );
+  }
+  return shortText(value, 150);
+};
+const statusBadgeClass = (status) => {
+  const value = String(status || "").toLowerCase();
+  if (["ok", "success", "done", "completed"].includes(value)) return "status-ok";
+  if (["error", "failed", "fail"].includes(value)) return "status-error";
+  if (["running", "queued", "in_progress"].includes(value)) return "status-running";
+  return "status-default";
+};
 
 const template = (text, vars = {}) =>
   String(text || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => String(vars[key] ?? ""));
@@ -367,6 +452,10 @@ const bindConfig = (cfg) => {
     cfg.calendar_rules?.user_calendar_id || "";
   document.getElementById("rules-user-calendar-name").value =
     cfg.calendar_rules?.user_calendar_name || "";
+  document.getElementById("rules-intake-calendar-id").value =
+    cfg.calendar_rules?.intake_calendar_id || "";
+  document.getElementById("rules-intake-calendar-name").value =
+    cfg.calendar_rules?.intake_calendar_name || "";
 
   document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
   document.getElementById("task-mandatory").checked = !!cfg.task_defaults?.mandatory;
@@ -406,16 +495,20 @@ const renderCalendars = (calendars) => {
     const immutableChecked = !!cal.immutable_selected;
     const lockedChecked = !!cal.default_locked;
     const mandatoryChecked = !!cal.default_mandatory;
+    const name = toDisplayValue(cal.name || "(Unnamed)");
+    const calendarId = toDisplayValue(cal.calendar_id);
     const tags = [];
     if (cal.is_staging) tags.push(t("tag.stage"));
     if (cal.is_user) tags.push(t("tag.user_layer"));
+    if (cal.is_intake) tags.push(t("tag.intake"));
     if (cal.managed_duplicate && cal.managed_duplicate_role === "user") tags.push(t("tag.duplicate_user"));
     if (cal.managed_duplicate && cal.managed_duplicate_role === "staging") tags.push(t("tag.duplicate_staging"));
+    if (cal.managed_duplicate && cal.managed_duplicate_role === "intake") tags.push(t("tag.duplicate_intake"));
 
     row.innerHTML = `
       <td>
-        <div><strong>${cal.name || "(Unnamed)"}</strong></div>
-        <div class="muted">${cal.calendar_id}${tags.length ? ` [${tags.join(", ")}]` : ""}</div>
+        <div><strong>${escapeHtml(name)}</strong></div>
+        <div class="muted" title="${escapeHtml(calendarId)}">${escapeHtml(calendarId)}${tags.length ? ` [${escapeHtml(tags.join(", "))}]` : ""}</div>
       </td>
       <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""}></td>
       <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""}></td>
@@ -439,14 +532,20 @@ const renderSyncLogs = (runs) => {
     return;
   }
   latestSyncRuns.forEach((run) => {
+    const runAt = toDisplayValue(run.run_at);
+    const status = toDisplayValue(run.status);
+    const trigger = toDisplayValue(run.trigger);
+    const changes = toDisplayValue(run.changes_applied);
+    const conflicts = toDisplayValue(run.conflicts);
+    const message = toDisplayValue(run.message);
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${run.run_at || ""}</td>
-      <td>${run.status || ""}</td>
-      <td>${run.trigger || ""}</td>
-      <td>${run.changes_applied ?? ""}</td>
-      <td>${run.conflicts ?? ""}</td>
-      <td>${run.message || ""}</td>
+      <td class="cell-compact" title="${escapeHtml(runAt)}">${escapeHtml(runAt)}</td>
+      <td><span class="status-badge ${statusBadgeClass(status)}">${escapeHtml(status)}</span></td>
+      <td class="cell-compact" title="${escapeHtml(trigger)}">${escapeHtml(trigger)}</td>
+      <td class="cell-compact">${escapeHtml(changes)}</td>
+      <td class="cell-compact">${escapeHtml(conflicts)}</td>
+      <td class="cell-compact cell-message" title="${escapeHtml(message)}">${escapeHtml(message)}</td>
     `;
     syncLogsBody.appendChild(tr);
   });
@@ -460,13 +559,24 @@ const renderAuditLogs = (events) => {
     return;
   }
   latestAuditEvents.forEach((event) => {
+    const createdAt = toDisplayValue(event.created_at);
+    const action = toDisplayValue(event.action);
+    const calendarId = toDisplayValue(event.calendar_id);
+    const uid = toDisplayValue(event.uid);
+    const summary = summarizeDetails(event.details) || t("details.empty");
+    const prettyJson = toPrettyJson(event.details);
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${event.created_at || ""}</td>
-      <td>${event.action || ""}</td>
-      <td>${event.calendar_id || ""}</td>
-      <td>${event.uid || ""}</td>
-      <td><code>${JSON.stringify(event.details || {})}</code></td>
+      <td class="cell-compact" title="${escapeHtml(createdAt)}">${escapeHtml(createdAt)}</td>
+      <td class="cell-compact" title="${escapeHtml(action)}">${escapeHtml(action)}</td>
+      <td class="cell-compact" title="${escapeHtml(calendarId)}">${escapeHtml(calendarId)}</td>
+      <td class="cell-compact" title="${escapeHtml(uid)}">${escapeHtml(uid)}</td>
+      <td>
+        <details class="log-details">
+          <summary title="${escapeHtml(summary)}">${escapeHtml(`${t("details.view")}: ${summary}`)}</summary>
+          <pre>${escapeHtml(prettyJson)}</pre>
+        </details>
+      </td>
     `;
     auditLogsBody.appendChild(tr);
   });
@@ -531,6 +641,8 @@ const readPayload = () => {
       staging_calendar_name: document.getElementById("rules-staging-calendar-name").value.trim(),
       user_calendar_id: document.getElementById("rules-user-calendar-id").value.trim(),
       user_calendar_name: document.getElementById("rules-user-calendar-name").value.trim(),
+      intake_calendar_id: document.getElementById("rules-intake-calendar-id").value.trim(),
+      intake_calendar_name: document.getElementById("rules-intake-calendar-name").value.trim(),
       per_calendar_defaults: perCalendarDefaults,
     },
     task_defaults: {
@@ -635,6 +747,44 @@ const runSync = async () => {
   }
 };
 
+const runCustomRangeSync = async () => {
+  withPending(customSyncBtn, true);
+  try {
+    const startValue = document.getElementById("sync-custom-start").value;
+    const endValue = document.getElementById("sync-custom-end").value;
+    if (!startValue || !endValue) {
+      throw new Error(t("error.custom_sync_missing"));
+    }
+    const startDate = new Date(startValue);
+    const endDate = new Date(endValue);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      throw new Error(t("error.custom_sync_missing"));
+    }
+    if (endDate < startDate) {
+      throw new Error(t("error.custom_sync_range"));
+    }
+
+    setStatus("info", "status.triggering_custom_sync");
+    const res = await fetch("/api/sync/run-window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start: startDate.toISOString(), end: endDate.toISOString() }),
+    });
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`${t("error.sync_trigger_failed")}: ${res.status} ${errorText}`);
+    }
+    await loadCalendars();
+    await loadSyncLogs();
+    await loadAuditLogs();
+    setStatus("success", "status.custom_sync_triggered_refreshed");
+  } catch (err) {
+    setStatus("error", "status.error", { detail: err.message || t("error.sync_trigger_failed") });
+  } finally {
+    withPending(customSyncBtn, false);
+  }
+};
+
 const refreshCalendars = async () => {
   withPending(refreshCalendarsBtn, true);
   try {
@@ -699,6 +849,7 @@ const refreshAuditLogs = async () => {
 
 saveBtn.addEventListener("click", saveConfig);
 syncBtn.addEventListener("click", runSync);
+customSyncBtn.addEventListener("click", runCustomRangeSync);
 refreshCalendarsBtn.addEventListener("click", refreshCalendars);
 aiTestLink.addEventListener("click", (event) => {
   event.preventDefault();

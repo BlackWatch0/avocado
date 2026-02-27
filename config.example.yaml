@@ -47,6 +47,8 @@ calendar_rules:
   staging_calendar_name: "Avocado AI Staging"
   user_calendar_id: ""
   user_calendar_name: "Avocado User Calendar"
+  intake_calendar_id: ""
+  intake_calendar_name: "Avocado New Events"
 
 task_defaults:
   locked: false

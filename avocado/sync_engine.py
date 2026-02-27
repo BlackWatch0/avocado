@@ -130,7 +130,12 @@ class SyncEngine:
         )
         return caldav_service.upsert_event(staging_calendar_id, staging_event)
 
-    def run_once(self, trigger: str = "manual") -> SyncResult:
+    def run_once(
+        self,
+        trigger: str = "manual",
+        window_start_override: datetime | None = None,
+        window_end_override: datetime | None = None,
+    ) -> SyncResult:
         started_at = datetime.now(timezone.utc)
         changes_applied = 0
         conflicts = 0
@@ -169,11 +174,17 @@ class SyncEngine:
                 config.calendar_rules.user_calendar_id,
                 config.calendar_rules.user_calendar_name,
             )
+            intake_info = caldav_service.ensure_staging_calendar(
+                config.calendar_rules.intake_calendar_id,
+                config.calendar_rules.intake_calendar_name,
+            )
             calendar_rule_updates: dict[str, Any] = {}
             if config.calendar_rules.staging_calendar_id != staging_info.calendar_id:
                 calendar_rule_updates["staging_calendar_id"] = staging_info.calendar_id
             if config.calendar_rules.user_calendar_id != user_info.calendar_id:
                 calendar_rule_updates["user_calendar_id"] = user_info.calendar_id
+            if config.calendar_rules.intake_calendar_id != intake_info.calendar_id:
+                calendar_rule_updates["intake_calendar_id"] = intake_info.calendar_id
             if calendar_rule_updates:
                 self.config_manager.update({"calendar_rules": calendar_rule_updates})
                 config = self.config_manager.load()
@@ -183,9 +194,10 @@ class SyncEngine:
             managed_name_keys = {
                 _normalize_calendar_name(config.calendar_rules.staging_calendar_name),
                 _normalize_calendar_name(config.calendar_rules.user_calendar_name),
+                _normalize_calendar_name(config.calendar_rules.intake_calendar_name),
             }
             managed_name_keys.discard("")
-            managed_calendar_ids = {staging_info.calendar_id, user_info.calendar_id}
+            managed_calendar_ids = {staging_info.calendar_id, user_info.calendar_id, intake_info.calendar_id}
             for calendar in calendars:
                 if calendar.calendar_id in managed_calendar_ids:
                     continue
@@ -225,9 +237,17 @@ class SyncEngine:
                 | immutable_from_defaults
             ) - editable_override - managed_calendar_ids
 
-            window_start, window_end = planning_window(
-                datetime.now(timezone.utc), config.sync.window_days
-            )
+            if (window_start_override is None) ^ (window_end_override is None):
+                raise ValueError("window_start_override and window_end_override must both be provided")
+            if window_start_override is not None and window_end_override is not None:
+                window_start = window_start_override.astimezone(timezone.utc)
+                window_end = window_end_override.astimezone(timezone.utc)
+                if window_end < window_start:
+                    raise ValueError("window_end_override must be later than window_start_override")
+            else:
+                window_start, window_end = planning_window(
+                    datetime.now(timezone.utc), config.sync.window_days
+                )
 
             all_events: list[EventRecord] = []
             mutable_events: dict[tuple[str, str], EventRecord] = {}
@@ -236,16 +256,20 @@ class SyncEngine:
 
             duplicate_user_calendars: list[tuple[str, str]] = []
             duplicate_stage_calendars: list[tuple[str, str]] = []
+            duplicate_intake_calendars: list[tuple[str, str]] = []
             normalized_user_name = _normalize_calendar_name(config.calendar_rules.user_calendar_name)
             normalized_stage_name = _normalize_calendar_name(config.calendar_rules.staging_calendar_name)
+            normalized_intake_name = _normalize_calendar_name(config.calendar_rules.intake_calendar_name)
             for calendar in calendars:
-                if calendar.calendar_id in {user_info.calendar_id, staging_info.calendar_id}:
+                if calendar.calendar_id in {user_info.calendar_id, staging_info.calendar_id, intake_info.calendar_id}:
                     continue
                 name_key = _normalize_calendar_name(calendar.name)
                 if normalized_user_name and name_key == normalized_user_name:
                     duplicate_user_calendars.append((calendar.calendar_id, calendar.name))
                 elif normalized_stage_name and name_key == normalized_stage_name:
                     duplicate_stage_calendars.append((calendar.calendar_id, calendar.name))
+                elif normalized_intake_name and name_key == normalized_intake_name:
+                    duplicate_intake_calendars.append((calendar.calendar_id, calendar.name))
 
             for duplicate_id, duplicate_name in duplicate_user_calendars:
                 duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
@@ -283,6 +307,28 @@ class SyncEngine:
                         calendar_id=duplicate_id,
                         uid=duplicate_event.uid,
                         action="purge_duplicate_stage_calendar_event",
+                        details={
+                            "trigger": trigger,
+                            "delete_ok": delete_ok,
+                            "duplicate_calendar_name": duplicate_name,
+                        },
+                    )
+                    should_replan = True
+
+            for duplicate_id, duplicate_name in duplicate_intake_calendars:
+                duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
+                for duplicate_event in duplicate_events:
+                    if not duplicate_event.uid:
+                        continue
+                    delete_ok = caldav_service.delete_event(
+                        duplicate_id,
+                        uid=duplicate_event.uid,
+                        href=duplicate_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=duplicate_id,
+                        uid=duplicate_event.uid,
+                        action="purge_duplicate_intake_calendar_event",
                         details={
                             "trigger": trigger,
                             "delete_ok": delete_ok,
@@ -336,6 +382,78 @@ class SyncEngine:
                     continue
 
                 user_map[user_event.uid] = user_event
+
+            intake_events = caldav_service.fetch_events(intake_info.calendar_id, window_start, window_end)
+            for intake_event in sorted(intake_events, key=lambda item: ((item.uid or ""), (item.href or ""))):
+                if not intake_event.uid:
+                    continue
+                if _managed_uid_prefix_depth(intake_event.uid) >= 2:
+                    self.state_store.record_audit_event(
+                        calendar_id=intake_info.calendar_id,
+                        uid=intake_event.uid,
+                        action="skip_nested_intake_uid",
+                        details={"trigger": trigger},
+                    )
+                    continue
+
+                user_uid = _staging_uid(intake_info.calendar_id, intake_event.uid)
+                existing_user = user_map.get(user_uid)
+                if existing_user is not None:
+                    delete_ok = caldav_service.delete_event(
+                        intake_info.calendar_id,
+                        uid=intake_event.uid,
+                        href=intake_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=intake_info.calendar_id,
+                        uid=intake_event.uid,
+                        action="intake_event_already_imported",
+                        details={
+                            "trigger": trigger,
+                            "mapped_user_uid": user_uid,
+                            "delete_ok": delete_ok,
+                        },
+                    )
+                    continue
+
+                imported_user = intake_event.with_updates(
+                    calendar_id=user_info.calendar_id,
+                    uid=user_uid,
+                    href="",
+                    source="user",
+                    original_calendar_id=intake_info.calendar_id,
+                    original_uid=intake_event.uid,
+                )
+                try:
+                    imported_user = caldav_service.upsert_event(user_info.calendar_id, imported_user)
+                except Exception as exc:
+                    if "Duplicate entry" in str(exc) or "Integrity constraint violation" in str(exc):
+                        self.state_store.record_audit_event(
+                            calendar_id=user_info.calendar_id,
+                            uid=user_uid,
+                            action="skip_intake_uid_conflict",
+                            details={"trigger": trigger},
+                        )
+                        continue
+                    raise
+
+                delete_ok = caldav_service.delete_event(
+                    intake_info.calendar_id,
+                    uid=intake_event.uid,
+                    href=intake_event.href,
+                )
+                user_map[user_uid] = imported_user
+                should_replan = True
+                self.state_store.record_audit_event(
+                    calendar_id=intake_info.calendar_id,
+                    uid=intake_event.uid,
+                    action="import_intake_event_to_user_layer",
+                    details={
+                        "trigger": trigger,
+                        "mapped_user_uid": user_uid,
+                        "delete_ok": delete_ok,
+                    },
+                )
 
             for calendar in calendars:
                 if calendar.calendar_id in managed_calendar_ids:

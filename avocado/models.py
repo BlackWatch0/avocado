@@ -128,6 +128,8 @@ class CalendarRulesConfig:
     staging_calendar_name: str = "Avocado AI Staging"
     user_calendar_id: str = ""
     user_calendar_name: str = "Avocado User Calendar"
+    intake_calendar_id: str = ""
+    intake_calendar_name: str = "Avocado New Events"
     per_calendar_defaults: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
@@ -159,6 +161,9 @@ class CalendarRulesConfig:
             user_calendar_id=str(data.get("user_calendar_id", "")).strip(),
             user_calendar_name=str(data.get("user_calendar_name", "Avocado User Calendar")).strip()
             or "Avocado User Calendar",
+            intake_calendar_id=str(data.get("intake_calendar_id", "")).strip(),
+            intake_calendar_name=str(data.get("intake_calendar_name", "Avocado New Events")).strip()
+            or "Avocado New Events",
             per_calendar_defaults=normalized_defaults,
         )
 

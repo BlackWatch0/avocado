@@ -1,11 +1,13 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from avocado.models import SyncResult
 from avocado.web_admin import create_app
 
 
@@ -28,6 +30,8 @@ class WebAdminTests(unittest.TestCase):
                 "immutable_calendar_ids": ["cal-1"],
                 "staging_calendar_id": "stage-id",
                 "staging_calendar_name": "stage",
+                "intake_calendar_id": "intake-id",
+                "intake_calendar_name": "intake",
             },
             "task_defaults": {"locked": False, "mandatory": False, "editable_fields": ["start", "end"]},
         }
@@ -114,6 +118,8 @@ class WebAdminTests(unittest.TestCase):
                 "staging_calendar_name": "Avocado AI Staging",
                 "user_calendar_id": "user-id",
                 "user_calendar_name": "Avocado User Calendar",
+                "intake_calendar_id": "intake-id",
+                "intake_calendar_name": "Avocado New Events",
             }
         }
         resp = self.client.put("/api/config", json={"payload": update})
@@ -161,7 +167,9 @@ class WebAdminTests(unittest.TestCase):
                 return [
                     _cal("stage-id", "Avocado AI Staging"),
                     _cal("user-id", "Avocado User Calendar"),
+                    _cal("intake-id", "Avocado New Events"),
                     _cal("dup-user-id", "Avocado User Calendar"),
+                    _cal("dup-intake-id", "Avocado New Events"),
                     _cal("normal-id", "Personal"),
                 ]
 
@@ -177,6 +185,43 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(len(duplicate_rows), 1)
         self.assertTrue(duplicate_rows[0]["managed_duplicate"])
         self.assertEqual(duplicate_rows[0]["managed_duplicate_role"], "user")
+        duplicate_intake_rows = [x for x in rows if x["calendar_id"] == "dup-intake-id"]
+        self.assertEqual(len(duplicate_intake_rows), 1)
+        self.assertTrue(duplicate_intake_rows[0]["managed_duplicate"])
+        self.assertEqual(duplicate_intake_rows[0]["managed_duplicate_role"], "intake")
+
+    def test_sync_run_window_calls_sync_engine(self) -> None:
+        fake_result = SyncResult(
+            status="success",
+            message="ok",
+            duration_ms=42,
+            changes_applied=1,
+            conflicts=0,
+            trigger="manual-window",
+            run_at=datetime(2026, 2, 27, 0, 0, 0, tzinfo=timezone.utc),
+        )
+        with mock.patch.object(self.client.app.state.context.sync_engine, "run_once", return_value=fake_result) as run_once:
+            resp = self.client.post(
+                "/api/sync/run-window",
+                json={
+                    "start": "2026-03-01T00:00:00Z",
+                    "end": "2026-03-03T23:59:59Z",
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["result"]["status"], "success")
+        run_once.assert_called_once()
+
+    def test_sync_run_window_rejects_invalid_range(self) -> None:
+        resp = self.client.post(
+            "/api/sync/run-window",
+            json={
+                "start": "2026-03-03T00:00:00Z",
+                "end": "2026-03-01T23:59:59Z",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
 
 
 if __name__ == "__main__":

@@ -105,6 +105,7 @@ Recommendation:
 - `GET /api/calendars`
 - `PUT /api/calendar-rules`
 - `POST /api/sync/run`
+- `POST /api/sync/run-window`
 - `GET /api/sync/status`
 - `GET /api/audit/events`
 
@@ -116,7 +117,11 @@ Admin page behavior:
 - leave `CalDAV password` or `AI API key` empty to keep existing values
 - click `Run Sync` then calendar list is refreshed from CalDAV
 - scheduler compares user-layer calendars (non-stage) with stage calendar to detect deltas and trigger re-planning
-- system ensures both `stage` and `user-layer` calendars exist; user-layer is visible in calendar table
+- system ensures three managed calendars exist:
+  - `stage` calendar (AI baseline)
+  - `user-layer` calendar (final user-visible schedule)
+  - `intake` calendar (user drops new events here before next sync)
+- on each sync, new events in `intake` are imported into `user-layer`, then removed from `intake`
 - per-calendar default behavior can be configured in UI:
   - immutable/editable
   - default locked
@@ -130,6 +135,7 @@ Admin page behavior:
   - manual override available from the language selector in header
 - `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
+- admin page supports one-click custom time-range sync (start/end datetime)
 
 ## Test
 

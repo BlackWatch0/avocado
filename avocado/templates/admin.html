@@ -84,6 +84,11 @@
             <option value="Pacific/Auckland">Pacific/Auckland</option>
           </select>
         </label>
+        <div class="range-sync-wrap">
+          <label><span data-i18n="field.custom_sync_start">Custom Sync Start</span><input id="sync-custom-start" type="datetime-local"></label>
+          <label><span data-i18n="field.custom_sync_end">Custom Sync End</span><input id="sync-custom-end" type="datetime-local"></label>
+          <button id="custom-sync-btn" type="button" data-i18n="action.run_custom_sync">Run Custom Range Sync</button>
+        </div>
       </section>
 
       <section class="card" data-panel="config">
@@ -94,6 +99,8 @@
         <label><span data-i18n="field.staging_calendar_name">Staging Calendar Name</span><input id="rules-staging-calendar-name" type="text"></label>
         <label><span data-i18n="field.user_calendar_id">User Calendar ID</span><input id="rules-user-calendar-id" type="text"></label>
         <label><span data-i18n="field.user_calendar_name">User Calendar Name</span><input id="rules-user-calendar-name" type="text"></label>
+        <label><span data-i18n="field.intake_calendar_id">Intake Calendar ID</span><input id="rules-intake-calendar-id" type="text"></label>
+        <label><span data-i18n="field.intake_calendar_name">Intake Calendar Name</span><input id="rules-intake-calendar-name" type="text"></label>
       </section>
 
       <section class="card" data-panel="config">
@@ -121,40 +128,51 @@
         </div>
       </section>
 
-      <section class="card wide" data-panel="logs">
+      <section class="card wide logs-shell" data-panel="logs">
         <h2 data-i18n="section.logs">Run Logs</h2>
-        <div class="actions in-card">
-          <button id="refresh-sync-logs-btn" type="button" data-i18n="action.refresh_sync_logs">Refresh Sync Logs</button>
-          <button id="refresh-audit-logs-btn" type="button" data-i18n="action.refresh_audit_logs">Refresh Audit Logs</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th data-i18n="table.run_at">Run At</th>
-                <th data-i18n="table.status">Status</th>
-                <th data-i18n="table.trigger">Trigger</th>
-                <th data-i18n="table.changes">Changes</th>
-                <th data-i18n="table.conflicts">Conflicts</th>
-                <th data-i18n="table.message">Message</th>
-              </tr>
-            </thead>
-            <tbody id="sync-logs-body"></tbody>
-          </table>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th data-i18n="table.created_at">Created At</th>
-                <th data-i18n="table.action">Action</th>
-                <th data-i18n="table.calendar">Calendar</th>
-                <th data-i18n="table.uid">UID</th>
-                <th data-i18n="table.details">Details</th>
-              </tr>
-            </thead>
-            <tbody id="audit-logs-body"></tbody>
-          </table>
+        <div class="logs-grid">
+          <section class="log-card">
+            <div class="log-card-head">
+              <h3 data-i18n="section.sync_logs">Sync Runs</h3>
+              <button id="refresh-sync-logs-btn" type="button" data-i18n="action.refresh_sync_logs">Refresh Sync Logs</button>
+            </div>
+            <div class="table-wrap">
+              <table class="log-table sync-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="table.run_at">Run At</th>
+                    <th data-i18n="table.status">Status</th>
+                    <th data-i18n="table.trigger">Trigger</th>
+                    <th data-i18n="table.changes">Changes</th>
+                    <th data-i18n="table.conflicts">Conflicts</th>
+                    <th class="col-message" data-i18n="table.message">Message</th>
+                  </tr>
+                </thead>
+                <tbody id="sync-logs-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="log-card">
+            <div class="log-card-head">
+              <h3 data-i18n="section.audit_logs">Audit Events</h3>
+              <button id="refresh-audit-logs-btn" type="button" data-i18n="action.refresh_audit_logs">Refresh Audit Logs</button>
+            </div>
+            <div class="table-wrap">
+              <table class="log-table audit-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="table.created_at">Created At</th>
+                    <th data-i18n="table.action">Action</th>
+                    <th data-i18n="table.calendar">Calendar</th>
+                    <th data-i18n="table.uid">UID</th>
+                    <th class="col-details" data-i18n="table.details">Details</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-logs-body"></tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </section>
     </form>
