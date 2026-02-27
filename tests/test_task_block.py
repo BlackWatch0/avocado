@@ -37,6 +37,11 @@ class TaskBlockTests(unittest.TestCase):
         self.assertFalse(parsed["mandatory"])
         self.assertEqual(strip_ai_task_block(description), "Hello")
 
+
+    def test_parse_invalid_yaml_returns_none(self) -> None:
+        description = """Hello\n\n[AI Task]\nuser_intent: "move around 3pm\nlocked: false\n[/AI Task]"""
+        self.assertIsNone(parse_ai_task_block(description))
+
     def test_set_category(self) -> None:
         description = "Task event"
         updated, payload, changed = set_ai_task_category(description, self.defaults, "study")
