@@ -6,6 +6,7 @@ from avocado.sync_engine import (
     _collapse_nested_managed_uid,
     _event_has_user_intent,
     _extract_user_intent,
+    _extract_editable_fields,
     _managed_uid_prefix_depth,
     _normalize_calendar_name,
     _purge_duplicate_calendar_events,
@@ -57,6 +58,16 @@ class SyncEngineHelperTests(unittest.TestCase):
         self.assertTrue(_event_has_user_intent(event_with_non_yaml_intent))
 
 
+    def test_extract_editable_fields_from_ai_task_block(self) -> None:
+        event = EventRecord(
+            calendar_id="cal",
+            uid="uid-5",
+            description=(
+                "[AI Task]\nlocked: false\nmandatory: false\n"
+                "editable_fields:\n  - start\n  - end\n[/AI Task]"
+            ),
+        )
+        self.assertEqual(_extract_editable_fields(event, ["summary"]), ["start", "end"])
     def test_extract_user_intent_with_invalid_yaml_fallback(self) -> None:
         event_with_non_yaml_intent = EventRecord(
             calendar_id="cal",

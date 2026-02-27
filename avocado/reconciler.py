@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 from avocado.models import EventRecord, parse_iso_datetime
 
@@ -15,6 +15,7 @@ class ReconcileOutcome:
     conflicted: bool
     reason: str
     event: EventRecord
+    blocked_fields: list[str]
 
 
 def apply_change(
@@ -22,6 +23,7 @@ def apply_change(
     current_event: EventRecord,
     change: dict[str, Any],
     baseline_etag: str,
+    editable_fields: Iterable[str] | None = None,
 ) -> ReconcileOutcome:
     if current_event.locked or current_event.mandatory:
         return ReconcileOutcome(
@@ -29,6 +31,7 @@ def apply_change(
             conflicted=True,
             reason="event_locked_or_mandatory",
             event=current_event,
+            blocked_fields=[],
         )
 
     if baseline_etag and current_event.etag and baseline_etag != current_event.etag:
@@ -37,6 +40,7 @@ def apply_change(
             conflicted=True,
             reason="user_modified_after_planning",
             event=current_event,
+            blocked_fields=[],
         )
 
     parsed_datetimes: dict[str, Any] = {}
@@ -55,8 +59,11 @@ def apply_change(
 
     updated = current_event.clone()
     applied_any = False
+    editable_set = {str(field).strip() for field in editable_fields or ALLOWED_FIELDS if str(field).strip()}
+    applicable_fields = ALLOWED_FIELDS & editable_set
+    blocked_fields = sorted(field for field in (ALLOWED_FIELDS - applicable_fields) if field in change)
 
-    for field in ALLOWED_FIELDS:
+    for field in applicable_fields:
         if field not in change:
             continue
         if field in parsed_datetimes:
@@ -76,4 +83,5 @@ def apply_change(
         conflicted=False,
         reason="applied" if applied_any else "no_changes",
         event=updated,
+        blocked_fields=blocked_fields,
     )
