@@ -936,6 +936,17 @@ class SyncEngine:
                         action="conflict",
                         details={"reason": outcome.reason, "trigger": trigger},
                     )
+                    if outcome.reason == "invalid_datetime":
+                        self.state_store.record_audit_event(
+                            calendar_id="system",
+                            uid="ai",
+                            action="ai_change_invalid_datetime",
+                            details={
+                                "trigger": trigger,
+                                "calendar_id": change.get("calendar_id"),
+                                "uid": change.get("uid"),
+                            },
+                        )
                     continue
                 if not outcome.applied:
                     continue
