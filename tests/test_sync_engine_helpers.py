@@ -52,9 +52,18 @@ class SyncEngineHelperTests(unittest.TestCase):
         event_with_non_yaml_intent = EventRecord(
             calendar_id="cal",
             uid="uid-3",
-            description="[AI Task]\nuser_intent: move before meal around 3pm)\n[/AI Task]",
+            description="[AI Task]\nuser_intent: \"move before meal around 3pm\nlocked: false\n[/AI Task]",
         )
         self.assertTrue(_event_has_user_intent(event_with_non_yaml_intent))
+
+
+    def test_extract_user_intent_with_invalid_yaml_fallback(self) -> None:
+        event_with_non_yaml_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-5",
+            description="[AI Task]\nuser_intent: \"move before meal around 3pm\nlocked: false\n[/AI Task]",
+        )
+        self.assertEqual(_extract_user_intent(event_with_non_yaml_intent), '"move before meal around 3pm')
 
     def test_extract_user_intent(self) -> None:
         event_with_intent = EventRecord(
