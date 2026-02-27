@@ -33,7 +33,8 @@ class SyncEngineRunOnceTests(TestCase):
         config_manager.load.return_value = config
 
         state_store = mock.Mock()
-        state_store.record_sync_run.return_value = 1
+        state_store.start_sync_run.return_value = 1
+        state_store.finish_sync_run.return_value = None
         state_store.get_meta.return_value = None
 
         source_event = EventRecord(
@@ -56,6 +57,9 @@ class SyncEngineRunOnceTests(TestCase):
         caldav_service = mock.Mock()
         caldav_service.list_calendars.return_value = calendars
         caldav_service.suggest_immutable_calendar_ids.return_value = set()
+        caldav_service.upsert_event.side_effect = (
+            lambda calendar_id, event: event.with_updates(calendar_id=calendar_id, etag=f"etag-{calendar_id}")
+        )
 
         def ensure_staging_calendar(calendar_id: str, calendar_name: str) -> CalendarInfo:
             return CalendarInfo(calendar_id=calendar_id, name=calendar_name, url=f"https://example/{calendar_id}")
@@ -74,7 +78,10 @@ class SyncEngineRunOnceTests(TestCase):
             result = engine.run_once(trigger="manual")
 
         self.assertEqual(result.status, "success")
-        self.assertEqual(caldav_service.upsert_event.call_count, 0)
+        source_upserts = [call for call in caldav_service.upsert_event.call_args_list if call.args and call.args[0] == "immutable-cal"]
+        self.assertEqual(source_upserts, [])
+        user_upserts = [call for call in caldav_service.upsert_event.call_args_list if call.args and call.args[0] == "user-cal"]
+        self.assertGreaterEqual(len(user_upserts), 1)
 
 
 if __name__ == "__main__":

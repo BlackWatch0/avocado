@@ -60,6 +60,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 修复 Class Schedule 未同步到用户层：immutable 日历镜像到 user-layer | `avocado/sync_engine.py`, `tests/test_sync_engine_run_once.py` | immutable 日历事件不再仅用于规划约束，同时会以 `locked=true` 镜像到用户层（使用 namespaced UID），并随源事件变更自动更新；仍保持源 immutable 日历只读不回写 | 风险中等；若用户同时订阅源 immutable 日历与用户层，可能在客户端看到“源+镜像”双份展示，可按需隐藏源日历 | AVO-042 |
 | 2026-02-27 | 移除 AI Task `mandatory` 生效链路 + 禁止编辑保留日历默认行为 | `avocado/task_block.py`, `avocado/sync_engine.py`, `avocado/web_admin.py`, `avocado/static/admin.js`, `tests/test_task_block.py`, `tests/test_sync_engine_source_layer.py` | `[AI Task]` 规范化不再写入 `mandatory`，历史 `mandatory` 字段会被忽略；同步引擎仅以 `locked` 判断是否允许 AI 修改；管理页对 `stage/user/intake` 三个保留日历的默认行为输入项禁用，且后端更新接口会过滤这三类日历的行为配置写入 | 风险低；旧配置中 `mandatory=true` 将不再阻止 AI，若需强约束请改用 `locked=true` | AVO-041 |
 | 2026-02-27 | Debug 日志增强：按 run_id 归类 + AI 链路细粒度审计 | `avocado/state_store.py`, `avocado/sync_engine.py`, `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css` | 同步任务改为“开始建档 + 结束回填状态”；新增 run 级别调试事件（`run_start`、`window_selected`、`ai_changes_normalized`、`ai_change_evaluate`、`skip_ai_*`）；审计接口支持 `run_id` 过滤，管理页日志支持按 `run_id` 筛选，点击 Sync Runs 中的 `#id` 可快速查看该轮全量操作 | 风险低；审计量会增加，数据库增长更快，可后续增加保留策略 | AVO-040 |
 | 2026-02-27 | 修复 manual-window 稳定性与 AI 目标过滤 | `avocado/reconciler.py`, `avocado/sync_engine.py`, `avocado/web_admin.py` | 修复 `editable_fields` 计算中的 `tuple & set` 运行时异常；AI 返回命中 `locked/mandatory` 事件时改为显式跳过审计（`ai_change_skipped_locked`）而非冲突；同步归一化阶段会清理锁定/强制事件中的遗留 `user_intent`，减少 AI 误命中；撤销接口增加无 `get_event_by_uid/etag` 兼容 | 风险低；锁定事件上的历史意图会被清空，若需执行需先解锁或在可编辑事件中下达意图 | AVO-039 |
@@ -110,6 +111,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-042 | immutable 日历同步到用户层镜像 | Done | `Class Schedule` 等 immutable 日历事件在用户层可见并随源更新；源 immutable 日历保持只读不被回写 | P0 | AVO-041 | 2026-02-27 |
 | AVO-041 | 删除 mandatory 生效语义并锁定保留日历行为编辑 | Done | `[AI Task]` 不再含 `mandatory` 且旧字段不影响调度；`stage/user/intake` 在管理页不可编辑默认行为，后端也会忽略其行为更新请求 | P0 | AVO-039, AVO-040 | 2026-02-27 |
 | AVO-040 | 审计日志按触发 run 分组与深度调试 | Done | 每次同步有独立 run_id；可按 run_id 查看审计日志；AI 请求到变更应用链路均有细粒度事件，便于排查“未更新”与“被校验拦截” | P0 | AVO-039 | 2026-02-27 |
 | AVO-039 | 修复 manual-window 崩溃与锁定事件误命中 AI | Done | `manual-window/scheduled` 不再出现 `tuple & set` 崩溃；锁定/强制事件被 AI 返回时会被跳过并可观测；撤销接口在服务能力受限时仍可回退执行 | P0 | AVO-038 | 2026-02-27 |

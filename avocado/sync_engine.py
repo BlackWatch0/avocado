@@ -750,6 +750,65 @@ class SyncEngine:
                                 action="skip_seed_or_normalize_ai_task_on_immutable",
                                 details={"trigger": trigger, "layer": "immutable"},
                             )
+
+                        # Keep immutable calendars visible in user-layer as locked mirrors.
+                        if _managed_uid_prefix_depth(event.uid) >= 2:
+                            self.state_store.record_audit_event(
+                                calendar_id=calendar.calendar_id,
+                                uid=event.uid,
+                                action="skip_nested_source_uid",
+                                details={"trigger": trigger},
+                            )
+                        else:
+                            user_uid = _staging_uid(calendar.calendar_id, event.uid)
+                            existing_user = user_map.get(user_uid)
+                            mirror_event = event.with_updates(
+                                calendar_id=user_info.calendar_id,
+                                uid=user_uid,
+                                href=(existing_user.href if existing_user is not None else ""),
+                                source="user",
+                                original_calendar_id=calendar.calendar_id,
+                                original_uid=event.uid,
+                            )
+                            immutable_user_defaults = TaskDefaultsConfig(
+                                locked=True,
+                                mandatory=False,
+                                editable_fields=list(config.task_defaults.editable_fields),
+                            )
+                            mirror_description, mirror_task_payload, _ = ensure_ai_task_block(
+                                mirror_event.description,
+                                immutable_user_defaults,
+                            )
+                            if str(mirror_task_payload.get("user_intent", "")).strip():
+                                mirror_description, mirror_task_payload, _ = set_ai_task_user_intent(
+                                    mirror_description,
+                                    immutable_user_defaults,
+                                    "",
+                                )
+                            mirror_event.description = mirror_description
+                            mirror_event.locked = True
+                            mirror_event.mandatory = False
+                            should_upsert_mirror = (
+                                existing_user is None
+                                or _event_fingerprint(existing_user) != _event_fingerprint(mirror_event)
+                                or not existing_user.locked
+                            )
+                            if should_upsert_mirror:
+                                mirror_event = caldav_service.upsert_event(user_info.calendar_id, mirror_event)
+                                user_map[user_uid] = mirror_event
+                                should_replan = True
+                                self.state_store.record_audit_event(
+                                    calendar_id=user_info.calendar_id,
+                                    uid=user_uid,
+                                    action="sync_immutable_to_user_layer",
+                                    details={
+                                        "trigger": trigger,
+                                        "source_calendar_id": calendar.calendar_id,
+                                        "source_uid": event.uid,
+                                    },
+                                )
+                            elif existing_user is not None:
+                                user_map[user_uid] = existing_user
                     else:
                         behavior = per_calendar_defaults.get(calendar.calendar_id, {})
                         task_defaults = TaskDefaultsConfig(
