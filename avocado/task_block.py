@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,6 +12,7 @@ from avocado.models import DEFAULT_EDITABLE_FIELDS, TaskDefaultsConfig
 AI_TASK_START = "[AI Task]"
 AI_TASK_END = "[/AI Task]"
 AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", re.DOTALL)
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -35,7 +37,11 @@ def parse_ai_task_block(description: str) -> dict[str, Any] | None:
     match = AI_TASK_PATTERN.search(description)
     if not match:
         return None
-    payload = yaml.safe_load(match.group(1)) or {}
+    try:
+        payload = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        logger.debug("Failed to parse [AI Task] YAML block", exc_info=True)
+        return None
     if not isinstance(payload, dict):
         return None
     return payload
@@ -120,4 +126,3 @@ def set_ai_task_user_intent(
     task_payload["updated_at"] = _now_iso()
     final_description = upsert_ai_task_block(updated_description, task_payload)
     return final_description, task_payload, True
-
