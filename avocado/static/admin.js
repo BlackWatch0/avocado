@@ -6,6 +6,9 @@ const customSyncBtn = document.getElementById("custom-sync-btn");
 const aiTestLink = document.getElementById("ai-test-link");
 const refreshSyncLogsBtn = document.getElementById("refresh-sync-logs-btn");
 const refreshAuditLogsBtn = document.getElementById("refresh-audit-logs-btn");
+const applyAuditRunFilterBtn = document.getElementById("apply-audit-run-filter-btn");
+const clearAuditRunFilterBtn = document.getElementById("clear-audit-run-filter-btn");
+const auditRunIdInput = document.getElementById("audit-run-id");
 const refreshAiChangesBtn = document.getElementById("refresh-ai-changes-btn");
 const refreshAiBytesBtn = document.getElementById("refresh-ai-bytes-btn");
 const aiBytesDaysInput = document.getElementById("ai-bytes-days");
@@ -319,6 +322,7 @@ let latestAuditEvents = [];
 let latestAiChanges = [];
 let latestAiRequestMetrics = [];
 let aiBytesAutoRefreshTimer = null;
+let selectedAuditRunId = null;
 
 const joinList = (items) => (items || []).join(", ");
 const splitByComma = (text) =>
@@ -655,7 +659,11 @@ const bindConfig = (cfg) => {
     cfg.calendar_rules?.intake_calendar_name || "";
 
   document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
-  document.getElementById("task-mandatory").checked = !!cfg.task_defaults?.mandatory;
+  const mandatoryInput = document.getElementById("task-mandatory");
+  if (mandatoryInput) {
+    mandatoryInput.checked = false;
+    mandatoryInput.disabled = true;
+  }
   document.getElementById("task-editable-fields").value = joinList(
     cfg.task_defaults?.editable_fields || []
   );
@@ -688,6 +696,8 @@ const renderCalendars = (calendars) => {
   latestCalendars.forEach((cal) => {
     const row = document.createElement("tr");
     row.dataset.calendarId = cal.calendar_id;
+    const isReserved = !!(cal.is_staging || cal.is_user || cal.is_intake);
+    row.dataset.reserved = isReserved ? "1" : "0";
 
     const immutableChecked = !!cal.immutable_selected;
     const lockedChecked = !!cal.default_locked;
@@ -707,9 +717,9 @@ const renderCalendars = (calendars) => {
         <div><strong>${escapeHtml(name)}</strong></div>
         <div class="muted" title="${escapeHtml(calendarId)}">${escapeHtml(calendarId)}${tags.length ? ` [${escapeHtml(tags.join(", "))}]` : ""}</div>
       </td>
-      <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""}></td>
-      <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""}></td>
-      <td><input type="checkbox" data-role="mandatory" ${mandatoryChecked ? "checked" : ""}></td>
+      <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
+      <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
+      <td><input type="checkbox" data-role="mandatory" ${mandatoryChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
     `;
 
     const immutableInput = row.querySelector("input[data-role='immutable']");
@@ -725,10 +735,11 @@ const renderSyncLogs = (runs) => {
   latestSyncRuns = runs || [];
   syncLogsBody.innerHTML = "";
   if (!latestSyncRuns.length) {
-    syncLogsBody.innerHTML = `<tr><td colspan='6'>${t("empty.sync_logs")}</td></tr>`;
+    syncLogsBody.innerHTML = `<tr><td colspan='7'>${t("empty.sync_logs")}</td></tr>`;
     return;
   }
   latestSyncRuns.forEach((run) => {
+    const runId = Number(run.id || 0);
     const runAt = toDisplayValue(run.run_at);
     const status = toDisplayValue(run.status);
     const trigger = toDisplayValue(run.trigger);
@@ -737,6 +748,7 @@ const renderSyncLogs = (runs) => {
     const message = toDisplayValue(run.message);
     const tr = document.createElement("tr");
     tr.innerHTML = `
+      <td class="cell-compact"><button type="button" class="link-btn run-filter-btn" data-run-id="${runId}">#${runId}</button></td>
       <td class="cell-compact" title="${escapeHtml(runAt)}">${escapeHtml(runAt)}</td>
       <td><span class="status-badge ${statusBadgeClass(status)}">${escapeHtml(status)}</span></td>
       <td class="cell-compact" title="${escapeHtml(trigger)}">${escapeHtml(trigger)}</td>
@@ -744,6 +756,16 @@ const renderSyncLogs = (runs) => {
       <td class="cell-compact">${escapeHtml(conflicts)}</td>
       <td class="cell-compact cell-message" title="${escapeHtml(message)}">${escapeHtml(message)}</td>
     `;
+    const filterBtn = tr.querySelector(".run-filter-btn");
+    if (filterBtn) {
+      filterBtn.addEventListener("click", async () => {
+        selectedAuditRunId = runId > 0 ? runId : null;
+        if (auditRunIdInput) {
+          auditRunIdInput.value = selectedAuditRunId ? String(selectedAuditRunId) : "";
+        }
+        await loadAuditLogs();
+      });
+    }
     syncLogsBody.appendChild(tr);
   });
 };
@@ -920,16 +942,16 @@ const readCalendarBehavior = () => {
   rows.forEach((row) => {
     const calendarId = row.dataset.calendarId;
     if (!calendarId) return;
+    if (row.dataset.reserved === "1") return;
 
     const immutable = !!row.querySelector("input[data-role='immutable']")?.checked;
     const locked = !!row.querySelector("input[data-role='locked']")?.checked;
-    const mandatory = !!row.querySelector("input[data-role='mandatory']")?.checked;
 
     if (immutable) immutableCalendarIds.push(calendarId);
     perCalendarDefaults[calendarId] = {
       mode: immutable ? "immutable" : "editable",
       locked,
-      mandatory,
+      mandatory: false,
     };
   });
 
@@ -977,7 +999,6 @@ const readPayload = () => {
     },
     task_defaults: {
       locked: document.getElementById("task-locked").checked,
-      mandatory: document.getElementById("task-mandatory").checked,
       editable_fields: splitByComma(document.getElementById("task-editable-fields").value),
     },
   };
@@ -1024,7 +1045,9 @@ const loadSyncLogs = async () => {
 };
 
 const loadAuditLogs = async () => {
-  const res = await fetch("/api/audit/events?limit=100");
+  const qs = new URLSearchParams({ limit: "300" });
+  if (selectedAuditRunId) qs.set("run_id", String(selectedAuditRunId));
+  const res = await fetch(`/api/audit/events?${qs.toString()}`);
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`${t("error.load_audit_logs_failed")}: ${res.status} ${errorText}`);
@@ -1271,6 +1294,18 @@ const refreshAuditLogs = async () => {
   }
 };
 
+const applyAuditRunFilter = async () => {
+  const runId = Number((auditRunIdInput?.value || "").trim());
+  selectedAuditRunId = Number.isFinite(runId) && runId > 0 ? runId : null;
+  await loadAuditLogs();
+};
+
+const clearAuditRunFilter = async () => {
+  selectedAuditRunId = null;
+  if (auditRunIdInput) auditRunIdInput.value = "";
+  await loadAuditLogs();
+};
+
 const refreshAiChanges = async () => {
   withPending(refreshAiChangesBtn, true);
   try {
@@ -1304,6 +1339,8 @@ aiTestLink.addEventListener("click", (event) => {
 });
 refreshSyncLogsBtn.addEventListener("click", refreshSyncLogs);
 refreshAuditLogsBtn.addEventListener("click", refreshAuditLogs);
+if (applyAuditRunFilterBtn) applyAuditRunFilterBtn.addEventListener("click", () => void applyAuditRunFilter());
+if (clearAuditRunFilterBtn) clearAuditRunFilterBtn.addEventListener("click", () => void clearAuditRunFilter());
 refreshAiChangesBtn.addEventListener("click", refreshAiChanges);
 refreshAiBytesBtn.addEventListener("click", refreshAiBytes);
 tabConfigBtn.addEventListener("click", () => setActiveTab("config"));

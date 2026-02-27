@@ -168,6 +168,7 @@
               <table class="log-table sync-table">
                 <thead>
                   <tr>
+                    <th>ID</th>
                     <th data-i18n="table.run_at">Run At</th>
                     <th data-i18n="table.status">Status</th>
                     <th data-i18n="table.trigger">Trigger</th>
@@ -184,6 +185,9 @@
           <section class="log-card">
             <div class="log-card-head">
               <h3 data-i18n="section.audit_logs">Audit Events</h3>
+              <input id="audit-run-id" type="number" min="1" placeholder="run id" style="width:110px;" />
+              <button id="apply-audit-run-filter-btn" type="button">Filter</button>
+              <button id="clear-audit-run-filter-btn" type="button">All</button>
               <button id="refresh-audit-logs-btn" type="button" data-i18n="action.refresh_audit_logs">Refresh Audit Logs</button>
             </div>
             <div class="table-wrap">

@@ -6,7 +6,8 @@ from typing import Any, Iterable
 from avocado.models import EventRecord, parse_iso_datetime
 
 
-ALLOWED_FIELDS = ("start", "end", "summary", "location", "description")
+ALLOWED_FIELDS = {"start", "end", "summary", "location", "description"}
+APPLY_FIELD_ORDER = ("start", "end", "summary", "location", "description")
 
 
 @dataclass
@@ -55,15 +56,18 @@ def apply_change(
                 conflicted=True,
                 reason="invalid_datetime",
                 event=current_event,
+                blocked_fields=[],
             )
 
     updated = current_event.clone()
     applied_any = False
-    editable_set = {str(field).strip() for field in editable_fields or ALLOWED_FIELDS if str(field).strip()}
+    editable_set = {str(field).strip() for field in editable_fields or APPLY_FIELD_ORDER if str(field).strip()}
     applicable_fields = ALLOWED_FIELDS & editable_set
     blocked_fields = sorted(field for field in (ALLOWED_FIELDS - applicable_fields) if field in change)
 
-    for field in applicable_fields:
+    for field in APPLY_FIELD_ORDER:
+        if field not in applicable_fields:
+            continue
         if field not in change:
             continue
         if field in parsed_datetimes:

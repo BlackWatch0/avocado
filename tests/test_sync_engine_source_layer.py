@@ -139,7 +139,7 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
         user_event = fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id][user_uid]
         self.assertIn("[AI Task]", user_event.description)
         self.assertIn("locked:", user_event.description)
-        self.assertIn("mandatory:", user_event.description)
+        self.assertNotIn("mandatory:", user_event.description)
 
 
 if __name__ == "__main__":

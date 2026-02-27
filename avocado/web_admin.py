@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import re
@@ -249,21 +249,50 @@ def create_app() -> FastAPI:
                     item["managed_duplicate"] = True
                     item["managed_duplicate_role"] = "intake"
             item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
-            item["default_mandatory"] = bool(behavior.get("mandatory", config.task_defaults.mandatory))
+            item["default_mandatory"] = False
             item["mode"] = "immutable" if immutable_selected else "editable"
             output.append(item)
         return {"calendars": output}
 
     @app.put("/api/calendar-rules")
     def put_calendar_rules(request: CalendarRulesUpdateRequest) -> dict[str, Any]:
+        current_config = app.state.context.config_manager.load()
+        reserved_calendar_ids = {
+            current_config.calendar_rules.staging_calendar_id,
+            current_config.calendar_rules.user_calendar_id,
+            current_config.calendar_rules.intake_calendar_id,
+        }
+        reserved_calendar_ids = {cid for cid in reserved_calendar_ids if str(cid).strip()}
+
+        filtered_defaults: dict[str, dict[str, Any]] = {}
+        for calendar_id, behavior in (request.per_calendar_defaults or {}).items():
+            cid = str(calendar_id).strip()
+            if not cid or cid in reserved_calendar_ids:
+                continue
+            entry = behavior or {}
+            mode = str(entry.get("mode", "editable")).strip().lower()
+            if mode not in {"editable", "immutable"}:
+                mode = "editable"
+            filtered_defaults[cid] = {
+                "mode": mode,
+                "locked": bool(entry.get("locked", False)),
+                "mandatory": False,
+            }
+
+        filtered_immutable_ids = [
+            str(cid).strip()
+            for cid in (request.immutable_calendar_ids or [])
+            if str(cid).strip() and str(cid).strip() not in reserved_calendar_ids
+        ]
+
         payload: dict[str, Any] = {
             "calendar_rules": {
                 "immutable_keywords": request.immutable_keywords,
-                "immutable_calendar_ids": request.immutable_calendar_ids,
+                "immutable_calendar_ids": filtered_immutable_ids,
                 "staging_calendar_id": request.staging_calendar_id,
                 "user_calendar_id": request.user_calendar_id,
                 "intake_calendar_id": request.intake_calendar_id,
-                "per_calendar_defaults": request.per_calendar_defaults,
+                "per_calendar_defaults": filtered_defaults,
             }
         }
         if request.staging_calendar_name is not None:
@@ -311,8 +340,17 @@ def create_app() -> FastAPI:
         return {"runs": app.state.context.state_store.recent_sync_runs(limit=limit)}
 
     @app.get("/api/audit/events")
-    def audit_events(limit: int = 100) -> dict[str, Any]:
-        return {"events": app.state.context.state_store.recent_audit_events(limit=limit)}
+    def audit_events(limit: int = 100, run_id: int | None = None) -> dict[str, Any]:
+        return {"events": app.state.context.state_store.recent_audit_events(limit=limit, run_id=run_id)}
+
+    @app.get("/api/debug/runs/{run_id}")
+    def debug_run(run_id: int, limit: int = 500) -> dict[str, Any]:
+        runs = app.state.context.state_store.recent_sync_runs(limit=200)
+        run = next((item for item in runs if int(item.get("id", 0)) == int(run_id)), None)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        events = app.state.context.state_store.recent_audit_events(limit=limit, run_id=run_id)
+        return {"run": run, "events": events}
 
     @app.get("/api/metrics/ai-request-bytes")
     def ai_request_bytes(days: int = 90, limit: int = 5000) -> dict[str, Any]:
@@ -460,21 +498,24 @@ def create_app() -> FastAPI:
 
         config = app.state.context.config_manager.load()
         service = CalDAVService(config.caldav)
-        current_event = service.get_event_by_uid(before_event.calendar_id, before_event.uid)
-        if current_event is None:
+        current_event = None
+        if hasattr(service, "get_event_by_uid"):
+            current_event = service.get_event_by_uid(before_event.calendar_id, before_event.uid)
+        if current_event is None and expected_etag:
             _record_undo_failure("target_event_not_found")
             raise HTTPException(status_code=404, detail="target event not found")
-        if not expected_etag:
-            _record_undo_failure("expected_etag_missing", current_etag=current_event.etag)
-            raise HTTPException(status_code=400, detail="undo version metadata missing")
-        if current_event.etag != expected_etag:
-            _record_undo_failure("version_conflict", current_etag=current_event.etag)
-            raise HTTPException(status_code=409, detail="事件已被后续修改，请手动确认")
+        if current_event is not None:
+            if not expected_etag:
+                _record_undo_failure("expected_etag_missing", current_etag=current_event.etag)
+                raise HTTPException(status_code=400, detail="undo version metadata missing")
+            if current_event.etag != expected_etag:
+                _record_undo_failure("version_conflict", current_etag=current_event.etag)
+                raise HTTPException(status_code=409, detail="事件已被后续修改，请手动确认")
 
         try:
             restored = service.upsert_event(before_event.calendar_id, before_event)
         except Exception as exc:
-            _record_undo_failure(f"undo_apply_error: {exc}", current_etag=current_event.etag)
+            _record_undo_failure(f"undo_apply_error: {exc}", current_etag=(current_event.etag if current_event is not None else ""))
             raise
         app.state.context.state_store.record_audit_event(
             calendar_id=restored.calendar_id,
@@ -484,8 +525,8 @@ def create_app() -> FastAPI:
                 "audit_id": request.audit_id,
                 "title": restored.summary,
                 "expected_etag": expected_etag,
-                "before_undo_etag": current_event.etag,
-                "after_undo_etag": restored.etag,
+                "before_undo_etag": (current_event.etag if current_event is not None else ""),
+                "after_undo_etag": getattr(restored, "etag", ""),
             },
         )
         return {"message": "undo applied", "event": restored.to_dict()}
@@ -533,3 +574,5 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+

@@ -60,6 +60,10 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 移除 AI Task `mandatory` 生效链路 + 禁止编辑保留日历默认行为 | `avocado/task_block.py`, `avocado/sync_engine.py`, `avocado/web_admin.py`, `avocado/static/admin.js`, `tests/test_task_block.py`, `tests/test_sync_engine_source_layer.py` | `[AI Task]` 规范化不再写入 `mandatory`，历史 `mandatory` 字段会被忽略；同步引擎仅以 `locked` 判断是否允许 AI 修改；管理页对 `stage/user/intake` 三个保留日历的默认行为输入项禁用，且后端更新接口会过滤这三类日历的行为配置写入 | 风险低；旧配置中 `mandatory=true` 将不再阻止 AI，若需强约束请改用 `locked=true` | AVO-041 |
+| 2026-02-27 | Debug 日志增强：按 run_id 归类 + AI 链路细粒度审计 | `avocado/state_store.py`, `avocado/sync_engine.py`, `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css` | 同步任务改为“开始建档 + 结束回填状态”；新增 run 级别调试事件（`run_start`、`window_selected`、`ai_changes_normalized`、`ai_change_evaluate`、`skip_ai_*`）；审计接口支持 `run_id` 过滤，管理页日志支持按 `run_id` 筛选，点击 Sync Runs 中的 `#id` 可快速查看该轮全量操作 | 风险低；审计量会增加，数据库增长更快，可后续增加保留策略 | AVO-040 |
+| 2026-02-27 | 修复 manual-window 稳定性与 AI 目标过滤 | `avocado/reconciler.py`, `avocado/sync_engine.py`, `avocado/web_admin.py` | 修复 `editable_fields` 计算中的 `tuple & set` 运行时异常；AI 返回命中 `locked/mandatory` 事件时改为显式跳过审计（`ai_change_skipped_locked`）而非冲突；同步归一化阶段会清理锁定/强制事件中的遗留 `user_intent`，减少 AI 误命中；撤销接口增加无 `get_event_by_uid/etag` 兼容 | 风险低；锁定事件上的历史意图会被清空，若需执行需先解锁或在可编辑事件中下达意图 | AVO-039 |
+| 2026-02-27 | 合并修复汇总（PR #3 ~ #9）：同步安全性与可控性增强 | `avocado/sync_engine.py`, `avocado/reconciler.py`, `avocado/task_block.py`, `avocado/web_admin.py`, `tests/test_*` | 合并包含 7 类修复：1) immutable/source 日历默认只读，避免回写污染；2) 重复日历清理增加归属校验；3) AI Task YAML 非法时容错；4) AI 返回非法 datetime 按条目降级并审计；5) AI 改动严格尊重 `editable_fields`；6) 撤销 AI 改动增加并发校验；7) 补充对应单测覆盖 | 风险低；若需回滚可按 PR 粒度回退（#3~#9），但会失去对应防护能力 | AVO-038 |
 | 2026-02-27 | 修复多层 UID 连锁重排：清理嵌套 UID + AI 执行后消费意图 | `avocado/sync_engine.py` | 启动/同步时自动清理 stage 与 user-layer 中 `depth>=2` 的嵌套托管 UID；AI 对事件成功应用（或判定无实际变化）后会清空该事件 `user_intent`，避免同一指令每轮重复触发导致事件持续漂移 | 风险中等；若希望同一意图持续生效需重新填写 `user_intent` | AVO-037 |
 | 2026-02-27 | 修复 intake 新日程重复导入与删除循环问题 | `avocado/sync_engine.py` | intake 日历仅处理 raw UID（depth=0）；对已托管 UID（depth>=1）直接清理，避免再次加前缀导致 `a:b:c` 扩散；导入时遇到 UID 冲突也会尝试删除 intake 源条目并回填已存在 user 事件 | 风险低；若误判极少数手工特殊 UID，可回滚到上一版本策略 | AVO-036 |
 | 2026-02-27 | 定时同步无变化时跳过 AI 请求 | `avocado/sync_engine.py`, `avocado/state_store.py` | 新增 planning payload 指纹存储；`trigger=scheduled` 且 payload 与上次一致时不调用 AI，写入 `skip_ai_same_payload` 审计事件 | 风险低；首次部署或手动/启动触发仍会正常请求 AI，如需恢复旧行为可回滚该判定分支 | AVO-035 |
@@ -106,6 +110,10 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-041 | 删除 mandatory 生效语义并锁定保留日历行为编辑 | Done | `[AI Task]` 不再含 `mandatory` 且旧字段不影响调度；`stage/user/intake` 在管理页不可编辑默认行为，后端也会忽略其行为更新请求 | P0 | AVO-039, AVO-040 | 2026-02-27 |
+| AVO-040 | 审计日志按触发 run 分组与深度调试 | Done | 每次同步有独立 run_id；可按 run_id 查看审计日志；AI 请求到变更应用链路均有细粒度事件，便于排查“未更新”与“被校验拦截” | P0 | AVO-039 | 2026-02-27 |
+| AVO-039 | 修复 manual-window 崩溃与锁定事件误命中 AI | Done | `manual-window/scheduled` 不再出现 `tuple & set` 崩溃；锁定/强制事件被 AI 返回时会被跳过并可观测；撤销接口在服务能力受限时仍可回退执行 | P0 | AVO-038 | 2026-02-27 |
+| AVO-038 | 合并 PR #3~#9 的同步稳健性修复包 | Done | immutable/source 不再被误回写；AI 非法数据不再中断整轮同步；撤销与字段编辑约束具备并发与边界保护；相关单测通过 | P0 | AVO-015, AVO-024, AVO-037 | 2026-02-27 |
 | AVO-037 | 清理嵌套 UID 并避免 user_intent 重复触发 | Done | 历史 `a:b:c` 事件不再参与正常排程链路并会被收敛/清理；同一 `user_intent` 只触发一次 AI 执行，不再每轮重复改动 | P0 | AVO-036 | 2026-02-27 |
 | AVO-036 | 修复 intake 已托管 UID 重复导入与残留清理 | Done | intake 中出现已托管 UID 时不再重复导入 user-layer，且会被自动清理；同 UID 冲突不再导致源条目残留循环 | P0 | AVO-022, AVO-034 | 2026-02-27 |
 | AVO-035 | 定时同步 payload 未变化时跳过 AI 调用 | Done | 每轮 `scheduled` 同步在输入完全一致时不再触发 AI 请求，并记录可观测审计事件 | P0 | AVO-034 | 2026-02-27 |

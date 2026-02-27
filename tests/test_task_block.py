@@ -26,7 +26,7 @@ class TaskBlockTests(unittest.TestCase):
         self.assertIn(AI_TASK_START, updated)
         self.assertIn(AI_TASK_END, updated)
         self.assertFalse(payload["locked"])
-        self.assertFalse(payload["mandatory"])
+        self.assertNotIn("mandatory", payload)
 
     def test_parse_and_strip(self) -> None:
         description = "Hello\n\n[AI Task]\nlocked: true\nmandatory: false\n[/AI Task]"

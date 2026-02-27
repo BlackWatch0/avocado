@@ -266,14 +266,47 @@ class SyncEngine:
         started_at = datetime.now(timezone.utc)
         changes_applied = 0
         conflicts = 0
+        run_id = self.state_store.start_sync_run(trigger=trigger, message="running")
+
+        def _audit(
+            *,
+            calendar_id: str,
+            uid: str,
+            action: str,
+            details: dict[str, Any],
+        ) -> None:
+            payload = dict(details or {})
+            payload.setdefault("trigger", trigger)
+            payload.setdefault("run_id", run_id)
+            self.state_store.record_audit_event(
+                calendar_id=calendar_id,
+                uid=uid,
+                action=action,
+                details=payload,
+                run_id=run_id,
+            )
 
         try:
             config = self.config_manager.load()
+            _audit(
+                calendar_id="system",
+                uid="sync",
+                action="run_start",
+                details={
+                    "timezone": config.sync.timezone,
+                    "window_days": config.sync.window_days,
+                    "interval_seconds": config.sync.interval_seconds,
+                    "ai_model": config.ai.model,
+                    "ai_base_url": config.ai.base_url,
+                    "system_prompt_length": len(config.ai.system_prompt or ""),
+                    "system_prompt_hash": _hash_text(config.ai.system_prompt or ""),
+                },
+            )
             if not config.caldav.base_url or not config.caldav.username:
                 duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
                 message = "CalDAV config missing base_url/username. Sync skipped."
-                self.state_store.record_sync_run(
-                    trigger=trigger,
+                self.state_store.finish_sync_run(
+                    run_id=run_id,
                     status="skipped",
                     message=message,
                     duration_ms=duration_ms,
@@ -378,6 +411,16 @@ class SyncEngine:
                 window_start, window_end = planning_window(
                     datetime.now(timezone.utc), config.sync.window_days
                 )
+            _audit(
+                calendar_id="system",
+                uid="sync",
+                action="window_selected",
+                details={
+                    "window_start": serialize_datetime(window_start),
+                    "window_end": serialize_datetime(window_end),
+                    "manual_window": window_start_override is not None,
+                },
+            )
 
             all_events: list[EventRecord] = []
             mutable_events: dict[tuple[str, str], EventRecord] = {}
@@ -678,16 +721,25 @@ class SyncEngine:
                         behavior = per_calendar_defaults.get(calendar.calendar_id, {})
                         task_defaults = TaskDefaultsConfig(
                             locked=bool(behavior.get("locked", True)),
-                            mandatory=bool(behavior.get("mandatory", True)),
+                            mandatory=False,
                             editable_fields=list(config.task_defaults.editable_fields),
                         )
                         new_description, task_payload, changed = ensure_ai_task_block(
                             event.description,
                             task_defaults,
                         )
+                        # Immutable calendars are constraints only; clear stale intent to avoid AI targeting them.
+                        if str(task_payload.get("user_intent", "")).strip():
+                            new_description, task_payload, intent_cleared = set_ai_task_user_intent(
+                                new_description,
+                                task_defaults,
+                                "",
+                            )
+                            if intent_cleared:
+                                changed = True
                         event.description = new_description
                         event.locked = bool(task_payload.get("locked", True))
-                        event.mandatory = bool(task_payload.get("mandatory", True))
+                        event.mandatory = False
                         if changed:
                             # Immutable source calendars are treated as read-only. Any AI-task
                             # metadata normalization should be maintained on user-layer copies
@@ -702,16 +754,16 @@ class SyncEngine:
                         behavior = per_calendar_defaults.get(calendar.calendar_id, {})
                         task_defaults = TaskDefaultsConfig(
                             locked=bool(behavior.get("locked", config.task_defaults.locked)),
-                            mandatory=bool(behavior.get("mandatory", config.task_defaults.mandatory)),
+                            mandatory=False,
                             editable_fields=list(config.task_defaults.editable_fields),
                         )
                         parsed_task_payload = parse_ai_task_block(event.description or "")
                         if isinstance(parsed_task_payload, dict):
                             event.locked = bool(parsed_task_payload.get("locked", task_defaults.locked))
-                            event.mandatory = bool(parsed_task_payload.get("mandatory", task_defaults.mandatory))
+                            event.mandatory = False
                         else:
                             event.locked = task_defaults.locked
-                            event.mandatory = task_defaults.mandatory
+                            event.mandatory = False
 
                         # Seed user-layer event from non-stage/non-user calendars if missing.
                         if _managed_uid_prefix_depth(event.uid) >= 2:
@@ -842,13 +894,21 @@ class SyncEngine:
                 behavior = per_calendar_defaults.get(user_info.calendar_id, {})
                 task_defaults = TaskDefaultsConfig(
                     locked=bool(behavior.get("locked", config.task_defaults.locked)),
-                    mandatory=bool(behavior.get("mandatory", config.task_defaults.mandatory)),
+                    mandatory=False,
                     editable_fields=list(config.task_defaults.editable_fields),
                 )
                 new_description, task_payload, changed = ensure_ai_task_block(user_event.description, task_defaults)
+                if user_event.locked and str(task_payload.get("user_intent", "")).strip():
+                    new_description, task_payload, intent_cleared = set_ai_task_user_intent(
+                        new_description,
+                        task_defaults,
+                        "",
+                    )
+                    if intent_cleared:
+                        changed = True
                 user_event.description = new_description
                 user_event.locked = bool(task_payload.get("locked", task_defaults.locked))
-                user_event.mandatory = bool(task_payload.get("mandatory", task_defaults.mandatory))
+                user_event.mandatory = False
                 if changed:
                     user_event = caldav_service.upsert_event(user_info.calendar_id, user_event)
                     user_map[user_event.uid] = user_event
@@ -920,6 +980,7 @@ class SyncEngine:
                         "messages_count": len(messages),
                         "events_count": len(all_events),
                     },
+                    run_id=run_id,
                 )
                 ai_output = ai_client.generate_changes(messages=messages)
                 raw_changes = ai_output.get("changes", [])
@@ -932,9 +993,35 @@ class SyncEngine:
                         "raw_changes_count": len(raw_changes),
                         "preview": raw_changes[:10],
                     },
+                    run_id=run_id,
+                )
+            elif not ai_client.is_configured():
+                _audit(
+                    calendar_id="system",
+                    uid="ai",
+                    action="skip_ai_not_configured",
+                    details={},
+                )
+            else:
+                _audit(
+                    calendar_id="system",
+                    uid="ai",
+                    action="skip_ai_no_replan_needed",
+                    details={
+                        "events_count": len(all_events),
+                    },
                 )
 
             normalized_changes = normalize_changes(raw_changes)
+            _audit(
+                calendar_id="system",
+                uid="ai",
+                action="ai_changes_normalized",
+                details={
+                    "raw_changes_count": len(raw_changes),
+                    "normalized_changes_count": len(normalized_changes),
+                },
+            )
 
             for change in normalized_changes:
                 target_key = (change["calendar_id"], change["uid"])
@@ -957,6 +1044,7 @@ class SyncEngine:
                             "calendar_id": change.get("calendar_id"),
                             "uid": change.get("uid"),
                         },
+                        run_id=run_id,
                     )
                     continue
 
@@ -966,11 +1054,30 @@ class SyncEngine:
                         uid=event.uid,
                         action="ai_change_skipped_no_intent",
                         details={"trigger": trigger},
+                        run_id=run_id,
+                    )
+                    continue
+                if event.locked:
+                    self.state_store.record_audit_event(
+                        calendar_id=event.calendar_id,
+                        uid=event.uid,
+                        action="ai_change_skipped_locked",
+                        details={"trigger": trigger},
+                        run_id=run_id,
                     )
                     continue
 
                 key = (event.calendar_id, event.uid)
                 editable_fields = _extract_editable_fields(event, list(config.task_defaults.editable_fields))
+                _audit(
+                    calendar_id=event.calendar_id,
+                    uid=event.uid,
+                    action="ai_change_evaluate",
+                    details={
+                        "editable_fields": editable_fields,
+                        "change_keys": sorted(change.keys()),
+                    },
+                )
                 outcome = apply_change(
                     current_event=event,
                     change=change,
@@ -987,6 +1094,7 @@ class SyncEngine:
                             "blocked_fields": outcome.blocked_fields,
                             "editable_fields": editable_fields,
                         },
+                        run_id=run_id,
                     )
                 if outcome.conflicted:
                     conflicts += 1
@@ -995,6 +1103,7 @@ class SyncEngine:
                         uid=event.uid,
                         action="conflict",
                         details={"reason": outcome.reason, "trigger": trigger},
+                        run_id=run_id,
                     )
                     if outcome.reason == "invalid_datetime":
                         self.state_store.record_audit_event(
@@ -1006,6 +1115,7 @@ class SyncEngine:
                                 "calendar_id": change.get("calendar_id"),
                                 "uid": change.get("uid"),
                             },
+                            run_id=run_id,
                         )
                     continue
                 if not outcome.applied:
@@ -1040,6 +1150,7 @@ class SyncEngine:
                         uid=event.uid,
                         action="ai_change_skipped_no_effect",
                         details={"trigger": trigger},
+                        run_id=run_id,
                     )
                     continue
                 mutable_events[key] = saved_user_event
@@ -1076,6 +1187,7 @@ class SyncEngine:
                         "before_event": before_event.to_dict(),
                         "after_event": saved_user_event.to_dict(),
                     },
+                    run_id=run_id,
                 )
 
             # Stage layer holds AI-processed baseline for next diff.
@@ -1108,6 +1220,7 @@ class SyncEngine:
                             "trigger": trigger,
                             "delete_ok": delete_ok,
                         },
+                        run_id=run_id,
                     )
                     if not delete_ok:
                         continue
@@ -1127,13 +1240,14 @@ class SyncEngine:
                                 "trigger": trigger,
                                 "error": f"{type(retry_exc).__name__}: {retry_exc}",
                             },
+                            run_id=run_id,
                         )
                         continue
 
             duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             message = f"Processed {len(all_events)} events, {len(normalized_changes)} AI changes."
-            run_id = self.state_store.record_sync_run(
-                trigger=trigger,
+            self.state_store.finish_sync_run(
+                run_id=run_id,
                 status="success",
                 message=message,
                 duration_ms=duration_ms,
@@ -1151,8 +1265,8 @@ class SyncEngine:
         except Exception as exc:
             duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             error_message = f"{type(exc).__name__}: {exc}"
-            self.state_store.record_sync_run(
-                trigger=trigger,
+            self.state_store.finish_sync_run(
+                run_id=run_id,
                 status="error",
                 message=error_message,
                 duration_ms=duration_ms,
@@ -1168,6 +1282,7 @@ class SyncEngine:
                     "error": error_message,
                     "traceback": traceback.format_exc(limit=5),
                 },
+                run_id=run_id,
             )
             return SyncResult(
                 status="error",

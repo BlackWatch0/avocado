@@ -23,7 +23,6 @@ def build_default_task(defaults: TaskDefaultsConfig) -> dict[str, Any]:
     return {
         "version": 1,
         "locked": bool(defaults.locked),
-        "mandatory": bool(defaults.mandatory),
         "editable_fields": list(defaults.editable_fields or DEFAULT_EDITABLE_FIELDS),
         "category": "uncategorized",
         "user_intent": "",
@@ -56,6 +55,9 @@ def strip_ai_task_block(description: str) -> str:
 
 def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dict[str, Any]:
     normalized = build_default_task(defaults)
+    parsed = dict(parsed or {})
+    # Backward compatibility: legacy `mandatory` is ignored and removed.
+    parsed.pop("mandatory", None)
     normalized.update(parsed)
     editable_fields = normalized.get("editable_fields", defaults.editable_fields)
     if not isinstance(editable_fields, list):
@@ -63,7 +65,6 @@ def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dic
     cleaned = [str(x).strip() for x in editable_fields if str(x).strip()]
     normalized["editable_fields"] = cleaned or list(DEFAULT_EDITABLE_FIELDS)
     normalized["locked"] = bool(normalized.get("locked", defaults.locked))
-    normalized["mandatory"] = bool(normalized.get("mandatory", defaults.mandatory))
     normalized["category"] = str(normalized.get("category", "uncategorized")).strip() or "uncategorized"
     normalized["updated_at"] = str(normalized.get("updated_at") or _now_iso())
     return normalized
