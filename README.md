@@ -108,6 +108,9 @@ Recommendation:
 - `POST /api/sync/run-window`
 - `GET /api/sync/status`
 - `GET /api/audit/events`
+- `GET /api/ai/changes`
+- `POST /api/ai/changes/undo`
+- `POST /api/ai/changes/revise`
 
 Default Docker admin URL:
 - `http://127.0.0.1:18080`

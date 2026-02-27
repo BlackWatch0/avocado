@@ -106,3 +106,18 @@ def set_ai_task_category(
     final_description = upsert_ai_task_block(updated_description, task_payload)
     return final_description, task_payload, True
 
+
+def set_ai_task_user_intent(
+    description: str,
+    defaults: TaskDefaultsConfig,
+    user_intent: str,
+) -> tuple[str, dict[str, Any], bool]:
+    updated_description, task_payload, changed = ensure_ai_task_block(description, defaults)
+    normalized_intent = str(user_intent or "").strip()
+    if str(task_payload.get("user_intent", "")).strip() == normalized_intent:
+        return updated_description, task_payload, changed
+    task_payload["user_intent"] = normalized_intent
+    task_payload["updated_at"] = _now_iso()
+    final_description = upsert_ai_task_block(updated_description, task_payload)
+    return final_description, task_payload, True
+

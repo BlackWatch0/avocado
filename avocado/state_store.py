@@ -135,6 +135,23 @@ class StateStore:
             output.append(item)
         return output
 
+    def get_audit_event(self, event_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT id, run_id, created_at, calendar_id, uid, action, details_json
+                    FROM audit_events
+                    WHERE id = ?
+                    """,
+                    (int(event_id),),
+                ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["details"] = json.loads(item.pop("details_json") or "{}")
+        return item
+
     def upsert_snapshot(
         self,
         *,

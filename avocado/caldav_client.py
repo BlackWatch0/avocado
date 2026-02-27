@@ -322,3 +322,11 @@ class CalDAVService:
             return True
         except Exception:
             return False
+
+    def get_event_by_uid(self, calendar_id: str, uid: str) -> EventRecord | None:
+        self._connect()
+        calendar = self._get_calendar(calendar_id)
+        resource = self._find_resource_by_uid(calendar, uid)
+        if resource is None:
+            return None
+        return self._parse_resource(calendar_id, resource)

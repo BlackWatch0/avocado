@@ -13,10 +13,11 @@ from pydantic import BaseModel, Field
 from avocado.ai_client import OpenAICompatibleClient
 from avocado.caldav_client import CalDAVService
 from avocado.config_manager import ConfigManager
-from avocado.models import parse_iso_datetime
+from avocado.models import EventRecord, parse_iso_datetime
 from avocado.scheduler import SyncScheduler
 from avocado.state_store import StateStore
 from avocado.sync_engine import SyncEngine
+from avocado.task_block import set_ai_task_user_intent
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -38,6 +39,15 @@ class CalendarRulesUpdateRequest(BaseModel):
 class CustomWindowSyncRequest(BaseModel):
     start: str
     end: str
+
+
+class AIChangeUndoRequest(BaseModel):
+    audit_id: int
+
+
+class AIChangeReviseRequest(BaseModel):
+    audit_id: int
+    instruction: str = Field(min_length=1, max_length=2000)
 
 
 class AppContext:
@@ -93,6 +103,26 @@ def _sanitize_config_payload(payload: dict[str, Any], current: dict[str, Any]) -
 
 def _normalize_name(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _event_from_dict(payload: dict[str, Any]) -> EventRecord:
+    return EventRecord(
+        calendar_id=str(payload.get("calendar_id", "")).strip(),
+        uid=str(payload.get("uid", "")).strip(),
+        summary=str(payload.get("summary", "")).strip(),
+        description=str(payload.get("description", "") or ""),
+        location=str(payload.get("location", "") or ""),
+        start=parse_iso_datetime(payload.get("start")),
+        end=parse_iso_datetime(payload.get("end")),
+        all_day=bool(payload.get("all_day", False)),
+        href=str(payload.get("href", "") or ""),
+        etag=str(payload.get("etag", "") or ""),
+        source=str(payload.get("source", "user") or "user"),
+        mandatory=bool(payload.get("mandatory", False)),
+        locked=bool(payload.get("locked", False)),
+        original_calendar_id=str(payload.get("original_calendar_id", "") or ""),
+        original_uid=str(payload.get("original_uid", "") or ""),
+    )
 
 
 def create_app() -> FastAPI:
@@ -282,6 +312,108 @@ def create_app() -> FastAPI:
     @app.get("/api/audit/events")
     def audit_events(limit: int = 100) -> dict[str, Any]:
         return {"events": app.state.context.state_store.recent_audit_events(limit=limit)}
+
+    @app.get("/api/ai/changes")
+    def ai_changes(limit: int = 50) -> dict[str, Any]:
+        events = app.state.context.state_store.recent_audit_events(limit=max(100, limit * 6))
+        output: list[dict[str, Any]] = []
+        for event in events:
+            if event.get("action") != "apply_ai_change":
+                continue
+            details = event.get("details", {}) or {}
+            before_event = details.get("before_event") or {}
+            after_event = details.get("after_event") or {}
+            title = str(
+                after_event.get("summary")
+                or details.get("title")
+                or before_event.get("summary")
+                or ""
+            ).strip()
+            output.append(
+                {
+                    "audit_id": event.get("id"),
+                    "created_at": event.get("created_at"),
+                    "calendar_id": event.get("calendar_id"),
+                    "uid": event.get("uid"),
+                    "title": title,
+                    "start": after_event.get("start") or details.get("start") or before_event.get("start") or "",
+                    "end": after_event.get("end") or details.get("end") or before_event.get("end") or "",
+                    "reason": str(details.get("reason", "") or ""),
+                    "fields": details.get("fields") or [],
+                    "patch": details.get("patch") or [],
+                }
+            )
+            if len(output) >= max(1, limit):
+                break
+        return {"changes": output}
+
+    @app.post("/api/ai/changes/undo")
+    def undo_ai_change(request: AIChangeUndoRequest) -> dict[str, Any]:
+        event = app.state.context.state_store.get_audit_event(request.audit_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="audit event not found")
+        if event.get("action") != "apply_ai_change":
+            raise HTTPException(status_code=400, detail="audit event is not an AI change")
+        details = event.get("details", {}) or {}
+        before_payload = details.get("before_event")
+        if not isinstance(before_payload, dict):
+            raise HTTPException(status_code=400, detail="undo data missing")
+        before_event = _event_from_dict(before_payload)
+        if not before_event.calendar_id or not before_event.uid:
+            raise HTTPException(status_code=400, detail="undo event identity missing")
+
+        config = app.state.context.config_manager.load()
+        service = CalDAVService(config.caldav)
+        restored = service.upsert_event(before_event.calendar_id, before_event)
+        app.state.context.state_store.record_audit_event(
+            calendar_id=restored.calendar_id,
+            uid=restored.uid,
+            action="undo_ai_change",
+            details={
+                "audit_id": request.audit_id,
+                "title": restored.summary,
+            },
+        )
+        return {"message": "undo applied", "event": restored.to_dict()}
+
+    @app.post("/api/ai/changes/revise")
+    def revise_ai_change(request: AIChangeReviseRequest) -> dict[str, Any]:
+        event = app.state.context.state_store.get_audit_event(request.audit_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="audit event not found")
+        if event.get("action") != "apply_ai_change":
+            raise HTTPException(status_code=400, detail="audit event is not an AI change")
+
+        calendar_id = str(event.get("calendar_id", "")).strip()
+        uid = str(event.get("uid", "")).strip()
+        if not calendar_id or not uid:
+            raise HTTPException(status_code=400, detail="target event identity missing")
+
+        config = app.state.context.config_manager.load()
+        service = CalDAVService(config.caldav)
+        target_event = service.get_event_by_uid(calendar_id, uid)
+        if target_event is None:
+            raise HTTPException(status_code=404, detail="target event not found")
+
+        updated_description, _, _ = set_ai_task_user_intent(
+            target_event.description,
+            config.task_defaults,
+            request.instruction,
+        )
+        target_event.description = updated_description
+        saved = service.upsert_event(calendar_id, target_event)
+        app.state.context.state_store.record_audit_event(
+            calendar_id=saved.calendar_id,
+            uid=saved.uid,
+            action="request_ai_revision",
+            details={
+                "audit_id": request.audit_id,
+                "instruction": request.instruction,
+                "title": saved.summary,
+            },
+        )
+        app.state.context.scheduler.trigger_manual()
+        return {"message": "revision request accepted", "event": saved.to_dict()}
 
     return app
 

@@ -223,6 +223,105 @@ class WebAdminTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
+    def test_ai_changes_list_from_audit(self) -> None:
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="user-id",
+            uid="uid-1",
+            action="apply_ai_change",
+            details={
+                "reason": "move before dinner",
+                "title": "Training",
+                "start": "2026-03-05T15:00:00+00:00",
+                "end": "2026-03-05T16:00:00+00:00",
+                "fields": ["start", "end"],
+                "patch": [{"field": "start", "before": "2026-03-05T19:00:00+00:00", "after": "2026-03-05T15:00:00+00:00"}],
+                "before_event": {"calendar_id": "user-id", "uid": "uid-1"},
+                "after_event": {"calendar_id": "user-id", "uid": "uid-1"},
+            },
+        )
+        resp = self.client.get("/api/ai/changes?limit=10")
+        self.assertEqual(resp.status_code, 200)
+        items = resp.json()["changes"]
+        self.assertTrue(len(items) >= 1)
+        self.assertEqual(items[0]["uid"], "uid-1")
+
+    def test_undo_ai_change(self) -> None:
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="user-id",
+            uid="uid-undo",
+            action="apply_ai_change",
+            details={
+                "before_event": {
+                    "calendar_id": "user-id",
+                    "uid": "uid-undo",
+                    "summary": "Before",
+                    "description": "desc",
+                    "location": "",
+                    "start": "2026-03-05T10:00:00+00:00",
+                    "end": "2026-03-05T11:00:00+00:00",
+                    "all_day": False,
+                    "href": "",
+                    "etag": "",
+                    "source": "user",
+                    "mandatory": False,
+                    "locked": False,
+                    "original_calendar_id": "",
+                    "original_uid": "",
+                }
+            },
+        )
+        latest = self.client.app.state.context.state_store.recent_audit_events(limit=1)[0]
+        fake_saved = latest["details"]["before_event"]
+
+        class _FakeService:
+            def __init__(self, _config: object) -> None:
+                pass
+
+            def upsert_event(self, _calendar_id: str, _event: object) -> object:
+                return type("Evt", (), {"to_dict": lambda self: fake_saved, "calendar_id": "user-id", "uid": "uid-undo", "summary": "Before"})()
+
+        with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
+            resp = self.client.post("/api/ai/changes/undo", json={"audit_id": latest["id"]})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["message"], "undo applied")
+
+    def test_revise_ai_change(self) -> None:
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="user-id",
+            uid="uid-revise",
+            action="apply_ai_change",
+            details={"before_event": {"calendar_id": "user-id", "uid": "uid-revise"}},
+        )
+        latest = self.client.app.state.context.state_store.recent_audit_events(limit=1)[0]
+
+        class _FakeEvent:
+            calendar_id = "user-id"
+            uid = "uid-revise"
+            description = ""
+            summary = "Revise Me"
+
+            def to_dict(self) -> dict:
+                return {"calendar_id": "user-id", "uid": "uid-revise"}
+
+        class _FakeService:
+            def __init__(self, _config: object) -> None:
+                pass
+
+            def get_event_by_uid(self, _calendar_id: str, _uid: str) -> object:
+                return _FakeEvent()
+
+            def upsert_event(self, _calendar_id: str, event: object) -> object:
+                return event
+
+        with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
+            with mock.patch.object(self.client.app.state.context.scheduler, "trigger_manual") as trigger_manual:
+                resp = self.client.post(
+                    "/api/ai/changes/revise",
+                    json={"audit_id": latest["id"], "instruction": "Move to 3pm"},
+                )
+        self.assertEqual(resp.status_code, 200)
+        trigger_manual.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

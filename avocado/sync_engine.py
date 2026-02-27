@@ -107,6 +107,27 @@ def _infer_category(event: EventRecord, change: dict[str, Any]) -> str:
     return "general"
 
 
+def _event_patch(before: EventRecord, after: EventRecord) -> list[dict[str, str]]:
+    fields = ["summary", "start", "end", "location", "description"]
+    patches: list[dict[str, str]] = []
+    for field in fields:
+        if field in {"start", "end"}:
+            before_val = serialize_datetime(getattr(before, field))
+            after_val = serialize_datetime(getattr(after, field))
+        else:
+            before_val = str(getattr(before, field) or "")
+            after_val = str(getattr(after, field) or "")
+        if before_val != after_val:
+            patches.append(
+                {
+                    "field": field,
+                    "before": str(before_val or ""),
+                    "after": str(after_val or ""),
+                }
+            )
+    return patches
+
+
 class SyncEngine:
     def __init__(self, config_manager: ConfigManager, state_store: StateStore) -> None:
         self.config_manager = config_manager
@@ -742,6 +763,7 @@ class SyncEngine:
                 if not outcome.applied:
                     continue
 
+                before_event = event.clone()
                 saved_user_event = caldav_service.upsert_event(event.calendar_id, outcome.event)
                 category = str(change.get("category", "")).strip() or _infer_category(saved_user_event, change)
                 new_description, _, category_changed = set_ai_task_category(
@@ -752,6 +774,7 @@ class SyncEngine:
                 if category_changed:
                     saved_user_event.description = new_description
                     saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
+                patch_fields = _event_patch(before_event, saved_user_event)
                 mutable_events[key] = saved_user_event
                 baseline_etags[key] = saved_user_event.etag
                 changes_applied += 1
@@ -762,7 +785,14 @@ class SyncEngine:
                     details={
                         "trigger": trigger,
                         "category": category,
-                        "fields": sorted([field for field in change.keys() if field not in {"calendar_id", "uid"}]),
+                        "reason": str(change.get("reason", "")).strip(),
+                        "title": saved_user_event.summary,
+                        "start": serialize_datetime(saved_user_event.start),
+                        "end": serialize_datetime(saved_user_event.end),
+                        "fields": [item["field"] for item in patch_fields],
+                        "patch": patch_fields,
+                        "before_event": before_event.to_dict(),
+                        "after_event": saved_user_event.to_dict(),
                     },
                 )
 

@@ -258,6 +258,107 @@ textarea {
   border: 1px solid #e2e8f0;
 }
 
+.ai-changes-list {
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.ai-change-item {
+  border: 1px solid #dbe4f2;
+  border-radius: 10px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.ai-change-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ai-change-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ai-change-meta {
+  margin-top: 2px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.ai-change-reason {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.ai-change-patch {
+  margin-top: 8px;
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 8px;
+  display: grid;
+  gap: 5px;
+}
+
+.ai-change-patch-line {
+  font-size: 12px;
+  color: #1e293b;
+}
+
+.kebab-wrap {
+  position: relative;
+}
+
+.kebab-btn {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.kebab-menu {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  min-width: 160px;
+  background: #ffffff;
+  border: 1px solid #dbe4f2;
+  border-radius: 8px;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+  display: none;
+  z-index: 4;
+}
+
+.kebab-menu.show {
+  display: grid;
+  gap: 4px;
+}
+
+.kebab-menu button {
+  width: 100%;
+  text-align: left;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.kebab-menu button:hover {
+  background: #eff6ff;
+}
+
 .log-table {
   width: 100%;
   border-collapse: collapse;

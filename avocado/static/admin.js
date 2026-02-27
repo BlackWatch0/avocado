@@ -6,6 +6,7 @@ const customSyncBtn = document.getElementById("custom-sync-btn");
 const aiTestLink = document.getElementById("ai-test-link");
 const refreshSyncLogsBtn = document.getElementById("refresh-sync-logs-btn");
 const refreshAuditLogsBtn = document.getElementById("refresh-audit-logs-btn");
+const refreshAiChangesBtn = document.getElementById("refresh-ai-changes-btn");
 const tabConfigBtn = document.getElementById("tab-config");
 const tabCalendarsBtn = document.getElementById("tab-calendars");
 const tabLogsBtn = document.getElementById("tab-logs");
@@ -13,6 +14,7 @@ const langSelect = document.getElementById("lang-select");
 const calendarBody = document.getElementById("calendar-behaviors-body");
 const syncLogsBody = document.getElementById("sync-logs-body");
 const auditLogsBody = document.getElementById("audit-logs-body");
+const aiChangesList = document.getElementById("ai-changes-list");
 const aiBytesChartCanvas = document.getElementById("ai-bytes-chart");
 const panelEls = [...document.querySelectorAll("[data-panel]")];
 
@@ -34,6 +36,7 @@ const I18N = {
     "action.save_config": "Save Config",
     "action.refresh_sync_logs": "Refresh Sync Logs",
     "action.refresh_audit_logs": "Refresh Audit Logs",
+    "action.refresh_ai_changes": "Refresh AI Changes",
     "section.caldav": "CalDAV",
     "section.ai": "AI",
     "section.sync": "Sync",
@@ -42,6 +45,7 @@ const I18N = {
     "section.calendars": "Calendars (from CalDAV)",
     "section.logs": "Run Logs",
     "section.ai_bytes_chart": "AI Request Bytes",
+    "section.ai_changes": "AI Change Items",
     "section.sync_logs": "Sync Runs",
     "section.audit_logs": "Audit Events",
     "field.base_url": "Base URL",
@@ -102,6 +106,12 @@ const I18N = {
     "status.sync_logs_refreshed": "Sync logs refreshed.",
     "status.refreshing_audit_logs": "Refreshing audit logs...",
     "status.audit_logs_refreshed": "Audit logs refreshed.",
+    "status.refreshing_ai_changes": "Refreshing AI change items...",
+    "status.ai_changes_refreshed": "AI change items refreshed.",
+    "status.undoing_ai_change": "Undoing AI change...",
+    "status.ai_change_undone": "AI change has been undone.",
+    "status.requesting_ai_revise": "Submitting AI revise request...",
+    "status.ai_revise_requested": "AI revise request submitted and sync triggered.",
     "status.initialization_failed": "Failed to initialize: {detail}",
     "status.error": "{detail}",
     "error.window_days": "window_days must be >= 1",
@@ -119,9 +129,15 @@ const I18N = {
     "error.ai_test_failed": "AI connectivity test failed",
     "error.refresh_sync_logs_failed": "Refresh sync logs failed",
     "error.refresh_audit_logs_failed": "Refresh audit logs failed",
+    "error.load_ai_changes_failed": "Failed to load AI change items",
+    "error.refresh_ai_changes_failed": "Refresh AI changes failed",
+    "error.undo_ai_change_failed": "Undo AI change failed",
+    "error.revise_ai_change_failed": "Revise AI change failed",
+    "error.revise_instruction_required": "Please enter revise instruction",
     "empty.calendars": "No calendars loaded.",
     "empty.sync_logs": "No sync logs.",
     "empty.audit_logs": "No audit logs.",
+    "empty.ai_changes": "No AI-applied changes.",
     "tag.stage": "stage",
     "tag.user_layer": "user-layer",
     "tag.duplicate_user": "duplicate-user",
@@ -132,7 +148,12 @@ const I18N = {
     "details.view": "View details",
     "details.empty": "No details",
     "chart.no_data": "No AI request data yet",
-    "chart.bytes_unit": "bytes"
+    "chart.bytes_unit": "bytes",
+    "ai.reason_prefix": "Reason: ",
+    "ai.menu.undo": "Undo",
+    "ai.menu.revise": "Ask AI to revise",
+    "ai.revise_prompt": "How should AI revise this event?",
+    "ai.time_range_prefix": "Time: "
   },
   zh: {
     "page.title": "Avocado 管理后台",
@@ -149,6 +170,7 @@ const I18N = {
     "action.save_config": "保存配置",
     "action.refresh_sync_logs": "刷新同步日志",
     "action.refresh_audit_logs": "刷新审计日志",
+    "action.refresh_ai_changes": "刷新 AI 修改记录",
     "section.caldav": "CalDAV",
     "section.ai": "AI",
     "section.sync": "同步",
@@ -157,6 +179,7 @@ const I18N = {
     "section.calendars": "日历列表（来自 CalDAV）",
     "section.logs": "运行日志",
     "section.ai_bytes_chart": "AI 请求字节数",
+    "section.ai_changes": "AI 修改条目",
     "section.sync_logs": "同步运行日志",
     "section.audit_logs": "审计事件日志",
     "field.base_url": "Base URL",
@@ -217,6 +240,12 @@ const I18N = {
     "status.sync_logs_refreshed": "同步日志已刷新。",
     "status.refreshing_audit_logs": "正在刷新审计日志...",
     "status.audit_logs_refreshed": "审计日志已刷新。",
+    "status.refreshing_ai_changes": "正在刷新 AI 修改条目...",
+    "status.ai_changes_refreshed": "AI 修改条目已刷新。",
+    "status.undoing_ai_change": "正在撤销 AI 修改...",
+    "status.ai_change_undone": "已撤销 AI 修改。",
+    "status.requesting_ai_revise": "正在提交 AI 重新修改请求...",
+    "status.ai_revise_requested": "已提交 AI 重新修改请求并触发同步。",
     "status.initialization_failed": "初始化失败：{detail}",
     "status.error": "{detail}",
     "error.window_days": "window_days 必须 >= 1",
@@ -234,9 +263,15 @@ const I18N = {
     "error.ai_test_failed": "AI 连通性测试失败",
     "error.refresh_sync_logs_failed": "刷新同步日志失败",
     "error.refresh_audit_logs_failed": "刷新审计日志失败",
+    "error.load_ai_changes_failed": "加载 AI 修改条目失败",
+    "error.refresh_ai_changes_failed": "刷新 AI 修改条目失败",
+    "error.undo_ai_change_failed": "撤销 AI 修改失败",
+    "error.revise_ai_change_failed": "提交 AI 重新修改失败",
+    "error.revise_instruction_required": "请输入修改要求",
     "empty.calendars": "暂无日历数据。",
     "empty.sync_logs": "暂无同步日志。",
     "empty.audit_logs": "暂无审计日志。",
+    "empty.ai_changes": "暂无 AI 修改条目。",
     "tag.stage": "stage",
     "tag.user_layer": "用户层",
     "tag.duplicate_user": "重复用户层",
@@ -247,7 +282,12 @@ const I18N = {
     "details.view": "查看详情",
     "details.empty": "无详情",
     "chart.no_data": "暂无 AI 请求数据",
-    "chart.bytes_unit": "字节"
+    "chart.bytes_unit": "字节",
+    "ai.reason_prefix": "原因：",
+    "ai.menu.undo": "撤销",
+    "ai.menu.revise": "要求 AI 按提示重改",
+    "ai.revise_prompt": "请输入你希望 AI 如何修改这个日程：",
+    "ai.time_range_prefix": "时间："
   }
 };
 
@@ -256,6 +296,7 @@ let currentLang = "en";
 let latestCalendars = [];
 let latestSyncRuns = [];
 let latestAuditEvents = [];
+let latestAiChanges = [];
 
 const joinList = (items) => (items || []).join(", ");
 const splitByComma = (text) =>
@@ -490,6 +531,7 @@ const applyLanguage = (pref) => {
   renderCalendars(latestCalendars);
   renderSyncLogs(latestSyncRuns);
   renderAuditLogs(latestAuditEvents);
+  renderAiChanges(latestAiChanges);
   renderAiBytesChart(latestAuditEvents);
   retranslateStatus();
 };
@@ -687,6 +729,127 @@ const renderAuditLogs = (events) => {
   renderAiBytesChart(latestAuditEvents);
 };
 
+const formatEventRange = (start, end) => {
+  const startText = toDisplayValue(start);
+  const endText = toDisplayValue(end);
+  return `${startText} -> ${endText}`;
+};
+
+const hideAllKebabMenus = () => {
+  document.querySelectorAll(".kebab-menu.show").forEach((menu) => menu.classList.remove("show"));
+};
+
+const undoAiChange = async (auditId) => {
+  setStatus("info", "status.undoing_ai_change");
+  const res = await fetch("/api/ai/changes/undo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audit_id: Number(auditId) }),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`${t("error.undo_ai_change_failed")}: ${res.status} ${errorText}`);
+  }
+  await loadAiChanges();
+  await loadAuditLogs();
+  await loadSyncLogs();
+  setStatus("success", "status.ai_change_undone");
+};
+
+const reviseAiChange = async (auditId, instruction) => {
+  setStatus("info", "status.requesting_ai_revise");
+  const res = await fetch("/api/ai/changes/revise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audit_id: Number(auditId), instruction }),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`${t("error.revise_ai_change_failed")}: ${res.status} ${errorText}`);
+  }
+  await loadAiChanges();
+  await loadAuditLogs();
+  await loadSyncLogs();
+  setStatus("success", "status.ai_revise_requested");
+};
+
+const renderAiChanges = (changes) => {
+  latestAiChanges = changes || [];
+  if (!aiChangesList) return;
+  aiChangesList.innerHTML = "";
+  if (!latestAiChanges.length) {
+    aiChangesList.innerHTML = `<div class="muted">${t("empty.ai_changes")}</div>`;
+    return;
+  }
+
+  latestAiChanges.forEach((item) => {
+    const patchLines = Array.isArray(item.patch) ? item.patch : [];
+    const patchHtml = patchLines.length
+      ? patchLines
+          .map(
+            (line) =>
+              `<div class="ai-change-patch-line"><strong>${escapeHtml(line.field || "")}</strong>: ${escapeHtml(
+                shortText(line.before || "", 80)
+              )} -> ${escapeHtml(shortText(line.after || "", 80))}</div>`
+          )
+          .join("")
+      : `<div class="ai-change-patch-line">-</div>`;
+
+    const wrapper = document.createElement("article");
+    wrapper.className = "ai-change-item";
+    wrapper.innerHTML = `
+      <div class="ai-change-head">
+        <div>
+          <p class="ai-change-title">${escapeHtml(item.title || "(Untitled)")}</p>
+          <div class="ai-change-meta">${escapeHtml(formatEventRange(item.start, item.end))}</div>
+          <div class="ai-change-meta">${escapeHtml(item.created_at || "")}</div>
+        </div>
+        <div class="kebab-wrap">
+          <button class="kebab-btn" type="button" aria-label="menu">...</button>
+          <div class="kebab-menu">
+            <button type="button" data-action="undo">${escapeHtml(t("ai.menu.undo"))}</button>
+            <button type="button" data-action="revise">${escapeHtml(t("ai.menu.revise"))}</button>
+          </div>
+        </div>
+      </div>
+      <p class="ai-change-reason">${escapeHtml(t("ai.reason_prefix"))}${escapeHtml(item.reason || "-")}</p>
+      <div class="ai-change-patch">${patchHtml}</div>
+    `;
+    const kebabBtn = wrapper.querySelector(".kebab-btn");
+    const menu = wrapper.querySelector(".kebab-menu");
+    kebabBtn?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const visible = menu?.classList.contains("show");
+      hideAllKebabMenus();
+      if (!visible) menu?.classList.add("show");
+    });
+    wrapper.querySelector("button[data-action='undo']")?.addEventListener("click", async () => {
+      hideAllKebabMenus();
+      try {
+        await undoAiChange(item.audit_id);
+      } catch (err) {
+        setStatus("error", "status.error", { detail: err.message || t("error.undo_ai_change_failed") });
+      }
+    });
+    wrapper.querySelector("button[data-action='revise']")?.addEventListener("click", async () => {
+      hideAllKebabMenus();
+      const instruction = window.prompt(t("ai.revise_prompt"), "");
+      if (instruction === null) return;
+      const text = instruction.trim();
+      if (!text) {
+        setStatus("error", "status.error", { detail: t("error.revise_instruction_required") });
+        return;
+      }
+      try {
+        await reviseAiChange(item.audit_id, text);
+      } catch (err) {
+        setStatus("error", "status.error", { detail: err.message || t("error.revise_ai_change_failed") });
+      }
+    });
+    aiChangesList.appendChild(wrapper);
+  });
+};
+
 const readCalendarBehavior = () => {
   const immutableCalendarIds = [];
   const perCalendarDefaults = {};
@@ -808,6 +971,16 @@ const loadAuditLogs = async () => {
   renderAuditLogs(data.events || []);
 };
 
+const loadAiChanges = async () => {
+  const res = await fetch("/api/ai/changes?limit=50");
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`${t("error.load_ai_changes_failed")}: ${res.status} ${errorText}`);
+  }
+  const data = await res.json();
+  renderAiChanges(data.changes || []);
+};
+
 const saveConfig = async () => {
   withPending(saveBtn, true);
   try {
@@ -824,6 +997,7 @@ const saveConfig = async () => {
     }
     await loadConfig();
     await loadCalendars();
+    await loadAiChanges();
     setStatus("success", "status.config_saved");
   } catch (err) {
     setStatus("error", "status.error", { detail: err.message || t("error.save_failed") });
@@ -844,6 +1018,7 @@ const runSync = async () => {
     await loadCalendars();
     await loadSyncLogs();
     await loadAuditLogs();
+    await loadAiChanges();
     setStatus("success", "status.sync_triggered_refreshed");
   } catch (err) {
     setStatus("error", "status.error", { detail: err.message || t("error.sync_trigger_failed") });
@@ -882,6 +1057,7 @@ const runCustomRangeSync = async () => {
     await loadCalendars();
     await loadSyncLogs();
     await loadAuditLogs();
+    await loadAiChanges();
     setStatus("success", "status.custom_sync_triggered_refreshed");
   } catch (err) {
     setStatus("error", "status.error", { detail: err.message || t("error.sync_trigger_failed") });
@@ -952,6 +1128,19 @@ const refreshAuditLogs = async () => {
   }
 };
 
+const refreshAiChanges = async () => {
+  withPending(refreshAiChangesBtn, true);
+  try {
+    setStatus("info", "status.refreshing_ai_changes");
+    await loadAiChanges();
+    setStatus("success", "status.ai_changes_refreshed");
+  } catch (err) {
+    setStatus("error", "status.error", { detail: err.message || t("error.refresh_ai_changes_failed") });
+  } finally {
+    withPending(refreshAiChangesBtn, false);
+  }
+};
+
 saveBtn.addEventListener("click", saveConfig);
 syncBtn.addEventListener("click", runSync);
 customSyncBtn.addEventListener("click", runCustomRangeSync);
@@ -963,10 +1152,12 @@ aiTestLink.addEventListener("click", (event) => {
 });
 refreshSyncLogsBtn.addEventListener("click", refreshSyncLogs);
 refreshAuditLogsBtn.addEventListener("click", refreshAuditLogs);
+refreshAiChangesBtn.addEventListener("click", refreshAiChanges);
 tabConfigBtn.addEventListener("click", () => setActiveTab("config"));
 tabCalendarsBtn.addEventListener("click", () => setActiveTab("calendars"));
 tabLogsBtn.addEventListener("click", () => setActiveTab("logs"));
 window.addEventListener("resize", () => renderAiBytesChart(latestAuditEvents));
+document.addEventListener("click", () => hideAllKebabMenus());
 
 (async () => {
   try {
@@ -976,6 +1167,7 @@ window.addEventListener("resize", () => renderAiBytesChart(latestAuditEvents));
     await loadCalendars();
     await loadSyncLogs();
     await loadAuditLogs();
+    await loadAiChanges();
   } catch (err) {
     setStatus("error", "status.initialization_failed", { detail: err.message || "" });
   }
