@@ -45,6 +45,8 @@ calendar_rules:
   per_calendar_defaults: {}
   staging_calendar_id: ""
   staging_calendar_name: "Avocado AI Staging"
+  user_calendar_id: ""
+  user_calendar_name: "Avocado User Calendar"
 
 task_defaults:
   locked: false

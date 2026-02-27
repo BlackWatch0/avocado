@@ -116,6 +116,7 @@ Admin page behavior:
 - leave `CalDAV password` or `AI API key` empty to keep existing values
 - click `Run Sync` then calendar list is refreshed from CalDAV
 - scheduler compares user-layer calendars (non-stage) with stage calendar to detect deltas and trigger re-planning
+- system ensures both `stage` and `user-layer` calendars exist; user-layer is visible in calendar table
 - per-calendar default behavior can be configured in UI:
   - immutable/editable
   - default locked
@@ -124,6 +125,7 @@ Admin page behavior:
 - AI system prompt can be edited directly in admin page
 - timezone uses dropdown selection (with custom fallback option when needed)
 - `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
+- admin page includes run-log query panels (sync runs + audit events)
 
 ## Test
 

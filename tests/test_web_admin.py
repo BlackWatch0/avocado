@@ -107,6 +107,77 @@ class WebAdminTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertIn("Connected", data["message"])
 
+    def test_calendars_marks_managed_duplicates(self) -> None:
+        update = {
+            "calendar_rules": {
+                "staging_calendar_id": "stage-id",
+                "staging_calendar_name": "Avocado AI Staging",
+                "user_calendar_id": "user-id",
+                "user_calendar_name": "Avocado User Calendar",
+            }
+        }
+        resp = self.client.put("/api/config", json={"payload": update})
+        self.assertEqual(resp.status_code, 200)
+
+        class _FakeService:
+            def __init__(self, _config: object) -> None:
+                pass
+
+            def ensure_staging_calendar(self, calendar_id: str, calendar_name: str) -> object:
+                return type(
+                    "CalendarInfoObj",
+                    (),
+                    {
+                        "calendar_id": calendar_id,
+                        "name": calendar_name,
+                        "url": calendar_id,
+                        "to_dict": lambda self: {
+                            "calendar_id": self.calendar_id,
+                            "name": self.name,
+                            "url": self.url,
+                            "immutable_suggested": False,
+                        },
+                    },
+                )()
+
+            def list_calendars(self) -> list[object]:
+                def _cal(cid: str, name: str) -> object:
+                    return type(
+                        "CalendarInfoObj",
+                        (),
+                        {
+                            "calendar_id": cid,
+                            "name": name,
+                            "url": cid,
+                            "to_dict": lambda self: {
+                                "calendar_id": self.calendar_id,
+                                "name": self.name,
+                                "url": self.url,
+                                "immutable_suggested": False,
+                            },
+                        },
+                    )()
+
+                return [
+                    _cal("stage-id", "Avocado AI Staging"),
+                    _cal("user-id", "Avocado User Calendar"),
+                    _cal("dup-user-id", "Avocado User Calendar"),
+                    _cal("normal-id", "Personal"),
+                ]
+
+            def suggest_immutable_calendar_ids(self, calendars: list[object], keywords: list[str]) -> set[str]:
+                return set()
+
+        with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
+            resp = self.client.get("/api/calendars")
+
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.json()["calendars"]
+        duplicate_rows = [x for x in rows if x["calendar_id"] == "dup-user-id"]
+        self.assertEqual(len(duplicate_rows), 1)
+        self.assertTrue(duplicate_rows[0]["managed_duplicate"])
+        self.assertEqual(duplicate_rows[0]["managed_duplicate_role"], "user")
+
 
 if __name__ == "__main__":
     unittest.main()

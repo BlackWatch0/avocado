@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import traceback
 from datetime import datetime, timezone
 from typing import Any
@@ -28,6 +29,32 @@ def _hash_text(value: str) -> str:
 def _staging_uid(calendar_id: str, uid: str) -> str:
     prefix = hashlib.sha1(calendar_id.encode("utf-8")).hexdigest()[:10]  # nosec B324
     return f"{prefix}:{uid}"
+
+
+def _normalize_calendar_name(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _managed_uid_prefix_depth(uid: str) -> int:
+    if not uid:
+        return 0
+    parts = uid.split(":")
+    depth = 0
+    for segment in parts[:-1]:
+        if re.fullmatch(r"[0-9a-f]{10}", segment):
+            depth += 1
+        else:
+            break
+    return depth
+
+
+def _collapse_nested_managed_uid(uid: str) -> str:
+    depth = _managed_uid_prefix_depth(uid)
+    if depth <= 1:
+        return uid
+    parts = uid.split(":")
+    # Keep exactly one namespace prefix (the right-most managed prefix).
+    return ":".join(parts[depth - 1 :])
 
 
 def _event_fingerprint(event: EventRecord) -> str:
@@ -70,10 +97,12 @@ class SyncEngine:
         caldav_service: CalDAVService,
         staging_calendar_id: str,
         source_event: EventRecord,
+        preserve_uid: bool = False,
     ) -> EventRecord:
+        target_uid = source_event.uid if preserve_uid else _staging_uid(source_event.calendar_id, source_event.uid)
         staging_event = source_event.with_updates(
             calendar_id=staging_calendar_id,
-            uid=_staging_uid(source_event.calendar_id, source_event.uid),
+            uid=target_uid,
             href="",
             source="staging",
             original_calendar_id=source_event.calendar_id,
@@ -110,10 +139,56 @@ class SyncEngine:
 
             caldav_service = CalDAVService(config.caldav)
             calendars = caldav_service.list_calendars()
+            per_calendar_defaults = config.calendar_rules.per_calendar_defaults
+
+            staging_info = caldav_service.ensure_staging_calendar(
+                config.calendar_rules.staging_calendar_id,
+                config.calendar_rules.staging_calendar_name,
+            )
+            user_info = caldav_service.ensure_staging_calendar(
+                config.calendar_rules.user_calendar_id,
+                config.calendar_rules.user_calendar_name,
+            )
+            calendar_rule_updates: dict[str, Any] = {}
+            if config.calendar_rules.staging_calendar_id != staging_info.calendar_id:
+                calendar_rule_updates["staging_calendar_id"] = staging_info.calendar_id
+            if config.calendar_rules.user_calendar_id != user_info.calendar_id:
+                calendar_rule_updates["user_calendar_id"] = user_info.calendar_id
+            if calendar_rule_updates:
+                self.config_manager.update({"calendar_rules": calendar_rule_updates})
+                config = self.config_manager.load()
+                per_calendar_defaults = config.calendar_rules.per_calendar_defaults
+
+            calendars = caldav_service.list_calendars()
+            managed_name_keys = {
+                _normalize_calendar_name(config.calendar_rules.staging_calendar_name),
+                _normalize_calendar_name(config.calendar_rules.user_calendar_name),
+            }
+            managed_name_keys.discard("")
+            managed_calendar_ids = {staging_info.calendar_id, user_info.calendar_id}
+            for calendar in calendars:
+                if calendar.calendar_id in managed_calendar_ids:
+                    continue
+                normalized_name = _normalize_calendar_name(calendar.name)
+                if normalized_name in managed_name_keys or any(
+                    normalized_name.startswith(f"{key} ") or normalized_name.startswith(f"{key}(")
+                    for key in managed_name_keys
+                ):
+                    managed_calendar_ids.add(calendar.calendar_id)
+                    self.state_store.record_audit_event(
+                        calendar_id=calendar.calendar_id,
+                        uid="calendar",
+                        action="skip_managed_duplicate_calendar",
+                        details={
+                            "trigger": trigger,
+                            "name": calendar.name,
+                            "reason": "same_name_as_managed_calendar",
+                        },
+                    )
+
             suggested_immutable = caldav_service.suggest_immutable_calendar_ids(
                 calendars, config.calendar_rules.immutable_keywords
             )
-            per_calendar_defaults = config.calendar_rules.per_calendar_defaults
             immutable_from_defaults = {
                 cid
                 for cid, behavior in per_calendar_defaults.items()
@@ -128,16 +203,7 @@ class SyncEngine:
                 set(config.calendar_rules.immutable_calendar_ids)
                 | suggested_immutable
                 | immutable_from_defaults
-            ) - editable_override
-
-            staging_info = caldav_service.ensure_staging_calendar(
-                config.calendar_rules.staging_calendar_id,
-                config.calendar_rules.staging_calendar_name,
-            )
-            if config.calendar_rules.staging_calendar_id != staging_info.calendar_id:
-                self.config_manager.update(
-                    {"calendar_rules": {"staging_calendar_id": staging_info.calendar_id}}
-                )
+            ) - editable_override - managed_calendar_ids
 
             window_start, window_end = planning_window(
                 datetime.now(timezone.utc), config.sync.window_days
@@ -147,14 +213,112 @@ class SyncEngine:
             mutable_events: dict[tuple[str, str], EventRecord] = {}
             baseline_etags: dict[tuple[str, str], str] = {}
             should_replan = trigger in {"manual", "startup"}
+
+            duplicate_user_calendars: list[tuple[str, str]] = []
+            duplicate_stage_calendars: list[tuple[str, str]] = []
+            normalized_user_name = _normalize_calendar_name(config.calendar_rules.user_calendar_name)
+            normalized_stage_name = _normalize_calendar_name(config.calendar_rules.staging_calendar_name)
+            for calendar in calendars:
+                if calendar.calendar_id in {user_info.calendar_id, staging_info.calendar_id}:
+                    continue
+                name_key = _normalize_calendar_name(calendar.name)
+                if normalized_user_name and name_key == normalized_user_name:
+                    duplicate_user_calendars.append((calendar.calendar_id, calendar.name))
+                elif normalized_stage_name and name_key == normalized_stage_name:
+                    duplicate_stage_calendars.append((calendar.calendar_id, calendar.name))
+
+            for duplicate_id, duplicate_name in duplicate_user_calendars:
+                duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
+                for duplicate_event in duplicate_events:
+                    if not duplicate_event.uid:
+                        continue
+                    delete_ok = caldav_service.delete_event(
+                        duplicate_id,
+                        uid=duplicate_event.uid,
+                        href=duplicate_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=duplicate_id,
+                        uid=duplicate_event.uid,
+                        action="purge_duplicate_user_calendar_event",
+                        details={
+                            "trigger": trigger,
+                            "delete_ok": delete_ok,
+                            "duplicate_calendar_name": duplicate_name,
+                        },
+                    )
+                    should_replan = True
+
+            for duplicate_id, duplicate_name in duplicate_stage_calendars:
+                duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
+                for duplicate_event in duplicate_events:
+                    if not duplicate_event.uid:
+                        continue
+                    delete_ok = caldav_service.delete_event(
+                        duplicate_id,
+                        uid=duplicate_event.uid,
+                        href=duplicate_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=duplicate_id,
+                        uid=duplicate_event.uid,
+                        action="purge_duplicate_stage_calendar_event",
+                        details={
+                            "trigger": trigger,
+                            "delete_ok": delete_ok,
+                            "duplicate_calendar_name": duplicate_name,
+                        },
+                    )
+                    should_replan = True
+
             stage_events = caldav_service.fetch_events(
                 staging_info.calendar_id, window_start, window_end
             )
-            stage_map = {evt.uid: evt for evt in stage_events if evt.uid}
+            stage_map: dict[str, EventRecord] = {}
+            for stage_event in sorted(stage_events, key=lambda item: ((item.uid or ""), (item.href or ""))):
+                if not stage_event.uid:
+                    continue
+                if stage_event.uid in stage_map:
+                    delete_ok = caldav_service.delete_event(
+                        staging_info.calendar_id,
+                        uid=stage_event.uid,
+                        href=stage_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=staging_info.calendar_id,
+                        uid=stage_event.uid,
+                        action="dedupe_stage_uid",
+                        details={"trigger": trigger, "delete_ok": delete_ok},
+                    )
+                    should_replan = True
+                    continue
+                stage_map[stage_event.uid] = stage_event
             seen_stage_uids: set[str] = set()
+            user_events = caldav_service.fetch_events(user_info.calendar_id, window_start, window_end)
+            user_map: dict[str, EventRecord] = {}
+            for user_event in sorted(user_events, key=lambda item: ((item.uid or ""), (item.href or ""))):
+                if not user_event.uid:
+                    continue
+
+                if user_event.uid in user_map:
+                    delete_ok = caldav_service.delete_event(
+                        user_info.calendar_id,
+                        uid=user_event.uid,
+                        href=user_event.href,
+                    )
+                    self.state_store.record_audit_event(
+                        calendar_id=user_info.calendar_id,
+                        uid=user_event.uid,
+                        action="dedupe_user_uid",
+                        details={"trigger": trigger, "delete_ok": delete_ok},
+                    )
+                    should_replan = True
+                    continue
+
+                user_map[user_event.uid] = user_event
 
             for calendar in calendars:
-                if calendar.calendar_id == staging_info.calendar_id:
+                if calendar.calendar_id in managed_calendar_ids:
                     continue
 
                 events = caldav_service.fetch_events(calendar.calendar_id, window_start, window_end)
@@ -210,14 +374,91 @@ class SyncEngine:
                                 details={"trigger": trigger, "layer": "user"},
                             )
 
-                        stage_uid = _staging_uid(calendar.calendar_id, event.uid)
-                        seen_stage_uids.add(stage_uid)
-                        stage_event = stage_map.get(stage_uid)
-                        if stage_event is None or _event_fingerprint(stage_event) != _event_fingerprint(event):
-                            should_replan = True
-
-                        mutable_events[(calendar.calendar_id, event.uid)] = event
-                        baseline_etags[(calendar.calendar_id, event.uid)] = event.etag
+                        # Seed user-layer event from non-stage/non-user calendars if missing.
+                        if _managed_uid_prefix_depth(event.uid) >= 2:
+                            self.state_store.record_audit_event(
+                                calendar_id=calendar.calendar_id,
+                                uid=event.uid,
+                                action="skip_nested_source_uid",
+                                details={"trigger": trigger},
+                            )
+                        else:
+                            user_uid = _staging_uid(calendar.calendar_id, event.uid)
+                            seeded_user = user_map.get(user_uid)
+                            legacy_user = user_map.get(event.uid)
+                            if legacy_user is not None and user_uid != event.uid:
+                                # Migrate legacy plain UID user events to the namespaced UID to prevent duplicates.
+                                migrated = legacy_user.with_updates(
+                                    uid=user_uid,
+                                    href="",
+                                    calendar_id=user_info.calendar_id,
+                                    source="user",
+                                    original_calendar_id=calendar.calendar_id,
+                                    original_uid=event.uid,
+                                )
+                                try:
+                                    migrated = caldav_service.upsert_event(user_info.calendar_id, migrated)
+                                except Exception as exc:
+                                    if "Duplicate entry" in str(exc) or "Integrity constraint violation" in str(exc):
+                                        self.state_store.record_audit_event(
+                                            calendar_id=user_info.calendar_id,
+                                            uid=user_uid,
+                                            action="skip_seed_uid_conflict",
+                                            details={
+                                                "trigger": trigger,
+                                                "reason": "duplicate_uid_on_migrate",
+                                            },
+                                        )
+                                        user_map.pop(legacy_user.uid, None)
+                                        seeded_user = user_map.get(user_uid)
+                                        continue
+                                    raise
+                                user_map[user_uid] = migrated
+                                delete_ok = caldav_service.delete_event(
+                                    user_info.calendar_id,
+                                    uid=legacy_user.uid,
+                                    href=legacy_user.href,
+                                )
+                                # Ensure the legacy entry is not processed again in this run.
+                                user_map.pop(legacy_user.uid, None)
+                                self.state_store.record_audit_event(
+                                    calendar_id=user_info.calendar_id,
+                                    uid=user_uid,
+                                    action="migrate_user_uid",
+                                    details={
+                                        "trigger": trigger,
+                                        "legacy_uid": legacy_user.uid,
+                                        "new_uid": user_uid,
+                                        "delete_ok": delete_ok,
+                                    },
+                                )
+                                seeded_user = migrated
+                            if seeded_user is None:
+                                seeded_user = event.with_updates(
+                                    calendar_id=user_info.calendar_id,
+                                    uid=user_uid,
+                                    href="",
+                                    source="user",
+                                    original_calendar_id=calendar.calendar_id,
+                                    original_uid=event.uid,
+                                )
+                                try:
+                                    seeded_user = caldav_service.upsert_event(user_info.calendar_id, seeded_user)
+                                except Exception as exc:
+                                    if "Duplicate entry" in str(exc) or "Integrity constraint violation" in str(exc):
+                                        self.state_store.record_audit_event(
+                                            calendar_id=user_info.calendar_id,
+                                            uid=user_uid,
+                                            action="skip_seed_uid_conflict",
+                                            details={
+                                                "trigger": trigger,
+                                                "reason": "duplicate_uid_on_seed",
+                                            },
+                                        )
+                                        continue
+                                    raise
+                                user_map[user_uid] = seeded_user
+                                should_replan = True
 
                     all_events.append(event)
                     self.state_store.upsert_snapshot(
@@ -228,6 +469,38 @@ class SyncEngine:
                             f"{event.summary}|{event.description}|{serialize_datetime(event.start)}|{serialize_datetime(event.end)}"
                         ),
                     )
+
+            # User-layer events are the editable working set.
+            for user_event in list(user_map.values()):
+                behavior = per_calendar_defaults.get(user_info.calendar_id, {})
+                task_defaults = TaskDefaultsConfig(
+                    locked=bool(behavior.get("locked", config.task_defaults.locked)),
+                    mandatory=bool(behavior.get("mandatory", config.task_defaults.mandatory)),
+                    editable_fields=list(config.task_defaults.editable_fields),
+                )
+                new_description, task_payload, changed = ensure_ai_task_block(user_event.description, task_defaults)
+                user_event.description = new_description
+                user_event.locked = bool(task_payload.get("locked", task_defaults.locked))
+                user_event.mandatory = bool(task_payload.get("mandatory", task_defaults.mandatory))
+                if changed:
+                    user_event = caldav_service.upsert_event(user_info.calendar_id, user_event)
+                    user_map[user_event.uid] = user_event
+                    should_replan = True
+                    self.state_store.record_audit_event(
+                        calendar_id=user_info.calendar_id,
+                        uid=user_event.uid,
+                        action="seed_or_normalize_ai_task",
+                        details={"trigger": trigger, "layer": "user-layer"},
+                    )
+
+                seen_stage_uids.add(user_event.uid)
+                stage_event = stage_map.get(user_event.uid)
+                if stage_event is None or _event_fingerprint(stage_event) != _event_fingerprint(user_event):
+                    should_replan = True
+
+                mutable_events[(user_info.calendar_id, user_event.uid)] = user_event
+                baseline_etags[(user_info.calendar_id, user_event.uid)] = user_event.etag
+                all_events.append(user_event)
 
             # If stage has events missing from current user layer, trigger a replan.
             for stage_uid in stage_map.keys():
@@ -248,6 +521,16 @@ class SyncEngine:
                 messages = build_messages(planning_payload, system_prompt=config.ai.system_prompt)
                 ai_output = ai_client.generate_changes(messages=messages)
                 raw_changes = ai_output.get("changes", [])
+                self.state_store.record_audit_event(
+                    calendar_id="system",
+                    uid="ai",
+                    action="ai_response",
+                    details={
+                        "trigger": trigger,
+                        "raw_changes_count": len(raw_changes),
+                        "preview": raw_changes[:10],
+                    },
+                )
 
             normalized_changes = normalize_changes(raw_changes)
 
@@ -255,10 +538,24 @@ class SyncEngine:
                 target_key = (change["calendar_id"], change["uid"])
                 event = mutable_events.get(target_key)
                 if event is None:
+                    # Map source-layer uid to user-layer uid if AI picked source calendar.
+                    mapped_user_uid = _staging_uid(change["calendar_id"], change["uid"])
+                    event = mutable_events.get((user_info.calendar_id, mapped_user_uid))
+                if event is None:
                     # UID fallback for providers that omit calendar_id correctly in AI response.
                     candidates = [x for k, x in mutable_events.items() if k[1] == change["uid"]]
                     event = candidates[0] if len(candidates) == 1 else None
                 if event is None:
+                    self.state_store.record_audit_event(
+                        calendar_id="system",
+                        uid="ai",
+                        action="ai_change_unmatched",
+                        details={
+                            "trigger": trigger,
+                            "calendar_id": change.get("calendar_id"),
+                            "uid": change.get("uid"),
+                        },
+                    )
                     continue
 
                 key = (event.calendar_id, event.uid)
@@ -309,6 +606,7 @@ class SyncEngine:
                     caldav_service=caldav_service,
                     staging_calendar_id=staging_info.calendar_id,
                     source_event=user_event,
+                    preserve_uid=True,
                 )
 
             duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)

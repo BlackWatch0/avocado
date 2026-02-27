@@ -34,6 +34,8 @@
 ### 数据与接口约定
 - `[AI Task]` 模块放置于事件 `DESCRIPTION` 字段，采用结构化 YAML 块。
 - `[AI Task]` 至少包含字段: `locked`、`mandatory`、`editable_fields`、`user_intent`、`updated_at`。
+- 用户层事件 UID 使用 namespaced 格式；若遇到历史 UID 冲突，写入会跳过并记录 `skip_seed_uid_conflict` 审计事件。
+- 若存在同名托管日历（stage/user）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
   - AI: `base_url`、`api_key`、`model`
@@ -55,6 +57,9 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 修复重复日历放大问题：同名托管副本隔离 + 冲突写入降级 | `avocado/sync_engine.py`, `avocado/caldav_client.py`, `avocado/web_admin.py`, `tests/test_sync_engine_helpers.py`, `tests/test_web_admin.py` | 同名托管副本日历不再作为源日历参与复制，并自动清理其窗口内事件；遇到 UID 唯一键冲突时降级为跳过并记录审计，避免整轮同步失败；管理页可标记 `managed_duplicate` 日历 | 风险中等；会清理同名副本日历窗口内事件，必要时可回滚版本并从 CalDAV 服务端恢复 | AVO-018 |
+| 2026-02-27 | 修复用户层日程重复：旧UID迁移去重与删除回退 | `avocado/sync_engine.py`, `avocado/caldav_client.py` | 迁移旧UID后立即从本轮 `user_map` 移除旧事件，避免同轮重复处理；删除旧事件时支持 `href -> uid` 回退查找，提升旧事件清理成功率 | 风险低；若个别 CalDAV 服务仍拒绝删除，可回滚此变更并保留日志定位 | AVO-017 |
+| 2026-02-27 | 增加用户层日历保证与管理页运行日志查询 | `avocado/models.py`, `avocado/web_admin.py`, `avocado/sync_engine.py`, `avocado/templates/admin.html`, `avocado/static/admin.js`, `avocado/static/admin.css`, `config.example.yaml`, `tests/test_models.py`, `README.md` | 新增 `user_calendar_id/user_calendar_name` 并在后端自动确保用户层日历存在；管理页新增同步日志与审计日志查询面板 | 风险低；日志查询为只读能力，不影响同步写入流程 | AVO-016 |
 | 2026-02-27 | 同步策略升级：全日历打标 + 用户层对比stage触发重排 + 分类标签 | `avocado/sync_engine.py`, `avocado/task_block.py`, `avocado/planner.py`, `avocado/models.py`, `tests/test_task_block.py`, `README.md` | 所有非stage日历事件统一补全简化版 `[AI Task]`；轮询先比对用户层(日历非stage)与stage差异再触发AI重排；AI结果写入分类标签 `category`（缺失时本地回退分类） | 风险中等；若分类不准可通过手工编辑 `[AI Task].category` 覆盖 | AVO-015 |
 | 2026-02-27 | 管理页新增 AI 连通性测试、提示词管理与时区下拉 | `avocado/web_admin.py`, `avocado/ai_client.py`, `avocado/models.py`, `avocado/planner.py`, `avocado/static/admin.js`, `avocado/templates/admin.html`, `config.example.yaml`, `tests/test_web_admin.py`, `tests/test_models.py`, `README.md` | 新增 `POST /api/ai/test` 测试 API 连通性；AI Base URL 默认 OpenAI；新增可编辑 `system_prompt`；时区改为下拉选择 | 风险低；AI 测试依赖供应商兼容的 chat/completions 接口，失败不影响核心同步流程 | AVO-014 |
 | 2026-02-27 | 管理页新增 CalDAV 日历列表与按日历默认行为配置 | `avocado/static/admin.js`, `avocado/templates/admin.html`, `avocado/static/admin.css`, `avocado/web_admin.py`, `avocado/models.py`, `avocado/sync_engine.py`, `config.example.yaml`, `tests/test_models.py`, `tests/test_web_admin.py`, `README.md` | 点击 Sync 后自动刷新 CalDAV 日历列表；可按日历配置 immutable/editable、default locked、default mandatory；新增 `per_calendar_defaults` 配置并接入同步逻辑 | 风险中等；若日历列表获取失败，配置表单仍可使用；可回滚至上个管理页版本 | AVO-013 |
@@ -79,6 +84,9 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-018 | 修复同名托管日历导致的重复扩散 | Done | 同名 user/stage 副本日历不会再参与源数据复制且会清理窗口内副本事件；UID 冲突不会导致整轮同步失败；管理页可识别重复托管日历 | P0 | AVO-017 | 2026-02-27 |
+| AVO-017 | 修复用户层日程重复（UID迁移） | Done | 旧 plain UID 迁移为 namespaced UID 后不再出现同轮双记录；旧事件删除支持回退策略 | P0 | AVO-016 | 2026-02-27 |
+| AVO-016 | 用户层日历自动确保 + 管理页日志查询 | Done | 系统自动确保 user-layer 日历存在并在管理页可识别；管理页可查询同步运行日志与审计日志 | P1 | AVO-015 | 2026-02-27 |
 | AVO-015 | 同步引擎改为用户层vs stage差异触发重排并增加分类标签 | Done | 所有非stage日历事件均有简化版 `[AI Task]`；轮询比对用户层与stage差异决定是否重排；AI变更后写入 `category` | P0 | AVO-013, AVO-014 | 2026-02-27 |
 | AVO-014 | 管理页支持 AI 测试接口、提示词管理、时区下拉 | Done | 可在管理页测试 AI API 连通性；AI 默认 Base URL 为 OpenAI；可编辑系统提示词；时区使用下拉选择 | P1 | AVO-012 | 2026-02-27 |
 | AVO-013 | 管理页支持日历列表与按日历默认行为配置 | Done | 点击 Sync 后可刷新并展示 CalDAV 日历；可按日历保存 immutable/locked/mandatory 默认行为并被同步引擎使用 | P1 | AVO-012 | 2026-02-27 |

@@ -126,6 +126,8 @@ class CalendarRulesConfig:
     immutable_calendar_ids: list[str] = field(default_factory=list)
     staging_calendar_id: str = ""
     staging_calendar_name: str = "Avocado AI Staging"
+    user_calendar_id: str = ""
+    user_calendar_name: str = "Avocado User Calendar"
     per_calendar_defaults: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
@@ -154,6 +156,9 @@ class CalendarRulesConfig:
             staging_calendar_id=str(data.get("staging_calendar_id", "")).strip(),
             staging_calendar_name=str(data.get("staging_calendar_name", "Avocado AI Staging")).strip()
             or "Avocado AI Staging",
+            user_calendar_id=str(data.get("user_calendar_id", "")).strip(),
+            user_calendar_name=str(data.get("user_calendar_name", "Avocado User Calendar")).strip()
+            or "Avocado User Calendar",
             per_calendar_defaults=normalized_defaults,
         )
 

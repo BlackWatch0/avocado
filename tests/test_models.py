@@ -12,6 +12,8 @@ class ModelsTests(unittest.TestCase):
     def test_calendar_rules_per_calendar_defaults_normalized(self) -> None:
         cfg = CalendarRulesConfig.from_dict(
             {
+                "user_calendar_id": "user-id",
+                "user_calendar_name": "User Layer",
                 "per_calendar_defaults": {
                     "cal-1": {"mode": "IMMUTABLE", "locked": 1, "mandatory": 0},
                     "cal-2": {"mode": "invalid", "locked": False, "mandatory": True},
@@ -19,6 +21,8 @@ class ModelsTests(unittest.TestCase):
                 }
             }
         )
+        self.assertEqual(cfg.user_calendar_id, "user-id")
+        self.assertEqual(cfg.user_calendar_name, "User Layer")
         self.assertEqual(cfg.per_calendar_defaults["cal-1"]["mode"], "immutable")
         self.assertTrue(cfg.per_calendar_defaults["cal-1"]["locked"])
         self.assertFalse(cfg.per_calendar_defaults["cal-1"]["mandatory"])

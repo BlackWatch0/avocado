@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ class CalendarRulesUpdateRequest(BaseModel):
     immutable_calendar_ids: list[str] = Field(default_factory=list)
     staging_calendar_id: str = ""
     staging_calendar_name: str | None = None
+    user_calendar_id: str = ""
+    user_calendar_name: str | None = None
     per_calendar_defaults: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -78,6 +81,10 @@ def _sanitize_config_payload(payload: dict[str, Any], current: dict[str, Any]) -
             sanitized.pop("ai", None)
 
     return sanitized
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
 
 def create_app() -> FastAPI:
@@ -133,6 +140,23 @@ def create_app() -> FastAPI:
         config = app.state.context.config_manager.load()
         service = CalDAVService(config.caldav)
         try:
+            if config.caldav.base_url and config.caldav.username:
+                stage_info = service.ensure_staging_calendar(
+                    config.calendar_rules.staging_calendar_id,
+                    config.calendar_rules.staging_calendar_name,
+                )
+                user_info = service.ensure_staging_calendar(
+                    config.calendar_rules.user_calendar_id,
+                    config.calendar_rules.user_calendar_name,
+                )
+                updates: dict[str, Any] = {"calendar_rules": {}}
+                if config.calendar_rules.staging_calendar_id != stage_info.calendar_id:
+                    updates["calendar_rules"]["staging_calendar_id"] = stage_info.calendar_id
+                if config.calendar_rules.user_calendar_id != user_info.calendar_id:
+                    updates["calendar_rules"]["user_calendar_id"] = user_info.calendar_id
+                if updates["calendar_rules"]:
+                    app.state.context.config_manager.update(updates)
+                    config = app.state.context.config_manager.load()
             calendars = service.list_calendars()
             suggested = service.suggest_immutable_calendar_ids(
                 calendars, config.calendar_rules.immutable_keywords
@@ -141,6 +165,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         output = []
+        stage_name_key = _normalize_name(config.calendar_rules.staging_calendar_name)
+        user_name_key = _normalize_name(config.calendar_rules.user_calendar_name)
         per_calendar_defaults = config.calendar_rules.per_calendar_defaults
         immutable_explicit = set(config.calendar_rules.immutable_calendar_ids)
         editable_override = {
@@ -162,6 +188,17 @@ def create_app() -> FastAPI:
             item["immutable_suggested"] = cal.calendar_id in suggested
             item["immutable_selected"] = immutable_selected
             item["is_staging"] = cal.calendar_id == config.calendar_rules.staging_calendar_id
+            item["is_user"] = cal.calendar_id == config.calendar_rules.user_calendar_id
+            name_key = _normalize_name(cal.name)
+            item["managed_duplicate"] = False
+            item["managed_duplicate_role"] = ""
+            if not item["is_staging"] and not item["is_user"]:
+                if stage_name_key and name_key == stage_name_key:
+                    item["managed_duplicate"] = True
+                    item["managed_duplicate_role"] = "staging"
+                elif user_name_key and name_key == user_name_key:
+                    item["managed_duplicate"] = True
+                    item["managed_duplicate_role"] = "user"
             item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
             item["default_mandatory"] = bool(behavior.get("mandatory", config.task_defaults.mandatory))
             item["mode"] = "immutable" if immutable_selected else "editable"
@@ -175,11 +212,14 @@ def create_app() -> FastAPI:
                 "immutable_keywords": request.immutable_keywords,
                 "immutable_calendar_ids": request.immutable_calendar_ids,
                 "staging_calendar_id": request.staging_calendar_id,
+                "user_calendar_id": request.user_calendar_id,
                 "per_calendar_defaults": request.per_calendar_defaults,
             }
         }
         if request.staging_calendar_name is not None:
             payload["calendar_rules"]["staging_calendar_name"] = request.staging_calendar_name
+        if request.user_calendar_name is not None:
+            payload["calendar_rules"]["user_calendar_name"] = request.user_calendar_name
         updated = app.state.context.config_manager.update(payload)
         return {"message": "calendar rules updated", "calendar_rules": updated.calendar_rules.__dict__}
 

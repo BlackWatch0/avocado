@@ -3,7 +3,15 @@ const saveBtn = document.getElementById("save-btn");
 const syncBtn = document.getElementById("sync-btn");
 const refreshCalendarsBtn = document.getElementById("refresh-calendars-btn");
 const testAiBtn = document.getElementById("test-ai-btn");
+const refreshSyncLogsBtn = document.getElementById("refresh-sync-logs-btn");
+const refreshAuditLogsBtn = document.getElementById("refresh-audit-logs-btn");
+const tabConfigBtn = document.getElementById("tab-config");
+const tabCalendarsBtn = document.getElementById("tab-calendars");
+const tabLogsBtn = document.getElementById("tab-logs");
 const calendarBody = document.getElementById("calendar-behaviors-body");
+const syncLogsBody = document.getElementById("sync-logs-body");
+const auditLogsBody = document.getElementById("audit-logs-body");
+const panelEls = [...document.querySelectorAll("[data-panel]")];
 
 const setStatus = (type, message) => {
   statusEl.className = `status ${type}`;
@@ -18,6 +26,16 @@ const splitByComma = (text) =>
     .filter(Boolean);
 
 let latestCalendars = [];
+
+const setActiveTab = (panel) => {
+  panelEls.forEach((el) => {
+    el.style.display = el.getAttribute("data-panel") === panel ? "" : "none";
+  });
+  [tabConfigBtn, tabCalendarsBtn, tabLogsBtn].forEach((btn) => btn.classList.remove("active"));
+  if (panel === "config") tabConfigBtn.classList.add("active");
+  if (panel === "calendars") tabCalendarsBtn.classList.add("active");
+  if (panel === "logs") tabLogsBtn.classList.add("active");
+};
 
 const bindConfig = (cfg) => {
   document.getElementById("caldav-base-url").value = cfg.caldav?.base_url || "";
@@ -52,6 +70,10 @@ const bindConfig = (cfg) => {
     cfg.calendar_rules?.staging_calendar_id || "";
   document.getElementById("rules-staging-calendar-name").value =
     cfg.calendar_rules?.staging_calendar_name || "";
+  document.getElementById("rules-user-calendar-id").value =
+    cfg.calendar_rules?.user_calendar_id || "";
+  document.getElementById("rules-user-calendar-name").value =
+    cfg.calendar_rules?.user_calendar_name || "";
 
   document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
   document.getElementById("task-mandatory").checked = !!cfg.task_defaults?.mandatory;
@@ -91,11 +113,14 @@ const renderCalendars = (calendars) => {
     const immutableChecked = !!cal.immutable_selected;
     const lockedChecked = !!cal.default_locked;
     const mandatoryChecked = !!cal.default_mandatory;
+    const tags = [];
+    if (cal.is_staging) tags.push("stage");
+    if (cal.is_user) tags.push("user-layer");
 
     row.innerHTML = `
       <td>
         <div><strong>${cal.name || "(Unnamed)"}</strong></div>
-        <div class="muted">${cal.calendar_id}${cal.is_staging ? " (staging)" : ""}</div>
+        <div class="muted">${cal.calendar_id}${tags.length ? ` [${tags.join(", ")}]` : ""}</div>
       </td>
       <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""}></td>
       <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""}></td>
@@ -109,6 +134,47 @@ const renderCalendars = (calendars) => {
   });
 
   syncImmutableIdsTextarea();
+};
+
+const renderSyncLogs = (runs) => {
+  syncLogsBody.innerHTML = "";
+  const items = runs || [];
+  if (!items.length) {
+    syncLogsBody.innerHTML = "<tr><td colspan='6'>No sync logs.</td></tr>";
+    return;
+  }
+  items.forEach((run) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${run.run_at || ""}</td>
+      <td>${run.status || ""}</td>
+      <td>${run.trigger || ""}</td>
+      <td>${run.changes_applied ?? ""}</td>
+      <td>${run.conflicts ?? ""}</td>
+      <td>${run.message || ""}</td>
+    `;
+    syncLogsBody.appendChild(tr);
+  });
+};
+
+const renderAuditLogs = (events) => {
+  auditLogsBody.innerHTML = "";
+  const items = events || [];
+  if (!items.length) {
+    auditLogsBody.innerHTML = "<tr><td colspan='5'>No audit logs.</td></tr>";
+    return;
+  }
+  items.forEach((event) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${event.created_at || ""}</td>
+      <td>${event.action || ""}</td>
+      <td>${event.calendar_id || ""}</td>
+      <td>${event.uid || ""}</td>
+      <td><code>${JSON.stringify(event.details || {})}</code></td>
+    `;
+    auditLogsBody.appendChild(tr);
+  });
 };
 
 const readCalendarBehavior = () => {
@@ -168,6 +234,8 @@ const readPayload = () => {
       immutable_calendar_ids: immutableCalendarIds,
       staging_calendar_id: document.getElementById("rules-staging-calendar-id").value.trim(),
       staging_calendar_name: document.getElementById("rules-staging-calendar-name").value.trim(),
+      user_calendar_id: document.getElementById("rules-user-calendar-id").value.trim(),
+      user_calendar_name: document.getElementById("rules-user-calendar-name").value.trim(),
       per_calendar_defaults: perCalendarDefaults,
     },
     task_defaults: {
@@ -199,6 +267,26 @@ const loadCalendars = async () => {
   }
   const data = await res.json();
   renderCalendars(data.calendars || []);
+};
+
+const loadSyncLogs = async () => {
+  const res = await fetch("/api/sync/status?limit=50");
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load sync logs: ${res.status} ${errorText}`);
+  }
+  const data = await res.json();
+  renderSyncLogs(data.runs || []);
+};
+
+const loadAuditLogs = async () => {
+  const res = await fetch("/api/audit/events?limit=100");
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load audit logs: ${res.status} ${errorText}`);
+  }
+  const data = await res.json();
+  renderAuditLogs(data.events || []);
 };
 
 const saveConfig = async () => {
@@ -235,7 +323,9 @@ const runSync = async () => {
       throw new Error(`Sync trigger failed: ${res.status} ${errorText}`);
     }
     await loadCalendars();
-    setStatus("success", "Sync triggered and calendars refreshed.");
+    await loadSyncLogs();
+    await loadAuditLogs();
+    setStatus("success", "Sync triggered and calendars/logs refreshed.");
   } catch (err) {
     setStatus("error", err.message || "Sync trigger failed");
   } finally {
@@ -278,15 +368,49 @@ const testAiConnectivity = async () => {
   }
 };
 
+const refreshSyncLogs = async () => {
+  withPending(refreshSyncLogsBtn, true);
+  try {
+    setStatus("info", "Refreshing sync logs...");
+    await loadSyncLogs();
+    setStatus("success", "Sync logs refreshed.");
+  } catch (err) {
+    setStatus("error", err.message || "Refresh sync logs failed");
+  } finally {
+    withPending(refreshSyncLogsBtn, false);
+  }
+};
+
+const refreshAuditLogs = async () => {
+  withPending(refreshAuditLogsBtn, true);
+  try {
+    setStatus("info", "Refreshing audit logs...");
+    await loadAuditLogs();
+    setStatus("success", "Audit logs refreshed.");
+  } catch (err) {
+    setStatus("error", err.message || "Refresh audit logs failed");
+  } finally {
+    withPending(refreshAuditLogsBtn, false);
+  }
+};
+
 saveBtn.addEventListener("click", saveConfig);
 syncBtn.addEventListener("click", runSync);
 refreshCalendarsBtn.addEventListener("click", refreshCalendars);
 testAiBtn.addEventListener("click", testAiConnectivity);
+refreshSyncLogsBtn.addEventListener("click", refreshSyncLogs);
+refreshAuditLogsBtn.addEventListener("click", refreshAuditLogs);
+tabConfigBtn.addEventListener("click", () => setActiveTab("config"));
+tabCalendarsBtn.addEventListener("click", () => setActiveTab("calendars"));
+tabLogsBtn.addEventListener("click", () => setActiveTab("logs"));
 
 (async () => {
   try {
+    setActiveTab("config");
     await loadConfig();
     await loadCalendars();
+    await loadSyncLogs();
+    await loadAuditLogs();
   } catch (err) {
     setStatus("error", err.message || "Failed to initialize");
   }

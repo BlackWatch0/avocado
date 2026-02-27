@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -17,6 +18,15 @@ except ImportError:  # pragma: no cover - dependency managed by requirements
 
 def _data_hash(raw_ical: str) -> str:
     return hashlib.sha1(raw_ical.encode("utf-8")).hexdigest()  # nosec B324
+
+
+def _normalize_calendar_id(value: str) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _normalize_calendar_name(value: str) -> str:
+    collapsed = re.sub(r"\s+", " ", str(value or "").strip())
+    return collapsed.casefold()
 
 
 def _coerce_datetime(value: Any, is_end: bool = False) -> datetime | None:
@@ -36,6 +46,24 @@ def _first_vevent(calendar_obj: ICalendar) -> ICEvent | None:
         if component.name == "VEVENT":
             return component
     return None
+
+
+def _decode_raw_ical(raw_data: Any) -> str:
+    if isinstance(raw_data, bytes):
+        return raw_data.decode("utf-8", errors="replace")
+    return str(raw_data)
+
+
+def _extract_uid_from_raw_ical(raw_data: Any) -> str:
+    try:
+        raw_ical = _decode_raw_ical(raw_data)
+        calendar_obj = ICalendar.from_ical(raw_ical)
+        vevent = _first_vevent(calendar_obj)
+        if vevent is None:
+            return ""
+        return str(vevent.get("UID", "")).strip()
+    except Exception:
+        return ""
 
 
 class CalDAVService:
@@ -100,21 +128,44 @@ class CalDAVService:
     def ensure_staging_calendar(self, staging_id: str, staging_name: str) -> CalendarInfo:
         self._connect()
         calendars = self.list_calendars()
-        if staging_id:
+        staging_id_norm = _normalize_calendar_id(staging_id)
+        if staging_id_norm:
             for info in calendars:
-                if info.calendar_id == staging_id:
+                if _normalize_calendar_id(info.calendar_id) == staging_id_norm:
                     return info
-        for info in calendars:
-            if info.name == staging_name:
-                return info
+        staging_name_norm = _normalize_calendar_name(staging_name)
+        if staging_name_norm:
+            same_name = [
+                info for info in calendars if _normalize_calendar_name(info.name) == staging_name_norm
+            ]
+            if same_name:
+                same_name.sort(key=lambda item: item.calendar_id)
+                return same_name[0]
+
         calendar = self._principal.make_calendar(name=staging_name)
-        info = CalendarInfo(
-            calendar_id=str(calendar.url),
+        created_id = str(calendar.url)
+        self._calendar_cache[created_id] = calendar
+
+        refreshed = self.list_calendars()
+        created_norm = _normalize_calendar_id(created_id)
+        for info in refreshed:
+            if _normalize_calendar_id(info.calendar_id) == created_norm:
+                return info
+
+        fallback_name_norm = _normalize_calendar_name(staging_name)
+        if fallback_name_norm:
+            same_name = [
+                info for info in refreshed if _normalize_calendar_name(info.name) == fallback_name_norm
+            ]
+            if same_name:
+                same_name.sort(key=lambda item: item.calendar_id)
+                return same_name[0]
+
+        return CalendarInfo(
+            calendar_id=created_id,
             name=getattr(calendar, "name", staging_name) or staging_name,
-            url=str(calendar.url),
+            url=created_id,
         )
-        self._calendar_cache[info.calendar_id] = calendar
-        return info
 
     def fetch_events(
         self,
@@ -134,10 +185,7 @@ class CalDAVService:
 
     def _parse_resource(self, calendar_id: str, resource: Any) -> EventRecord:
         raw_data = resource.data
-        if isinstance(raw_data, bytes):
-            raw_ical = raw_data.decode("utf-8", errors="replace")
-        else:
-            raw_ical = str(raw_data)
+        raw_ical = _decode_raw_ical(raw_data)
 
         calendar_obj = ICalendar.from_ical(raw_ical)
         vevent = _first_vevent(calendar_obj)
@@ -203,9 +251,7 @@ class CalDAVService:
 
         if updated_resource is None:
             try:
-                existing = calendar.event_by_uid(event.uid)
-                if isinstance(existing, list):
-                    existing = existing[0] if existing else None
+                existing = self._find_resource_by_uid(calendar, event.uid)
                 if existing is not None:
                     existing.data = raw_ical
                     existing.save()
@@ -214,7 +260,20 @@ class CalDAVService:
                 updated_resource = None
 
         if updated_resource is None:
-            updated_resource = calendar.save_event(raw_ical)
+            try:
+                updated_resource = calendar.save_event(raw_ical)
+            except Exception:
+                # Some CalDAV backends may race on UID uniqueness checks.
+                try:
+                    existing = self._find_resource_by_uid(calendar, event.uid)
+                    if existing is not None:
+                        existing.data = raw_ical
+                        existing.save()
+                        updated_resource = existing
+                    else:
+                        raise
+                except Exception:
+                    raise
 
         parsed = self._parse_resource(calendar_id, updated_resource)
         parsed.source = event.source
@@ -223,3 +282,43 @@ class CalDAVService:
         parsed.original_calendar_id = event.original_calendar_id
         parsed.original_uid = event.original_uid
         return parsed
+
+    def _find_resource_by_uid(self, calendar: Any, uid: str) -> Any:
+        if not uid:
+            return None
+        try:
+            resource = calendar.event_by_uid(uid)
+            if isinstance(resource, list):
+                resource = resource[0] if resource else None
+            if resource is not None:
+                return resource
+        except Exception:
+            pass
+
+        try:
+            for resource in calendar.events():
+                candidate_uid = _extract_uid_from_raw_ical(getattr(resource, "data", ""))
+                if candidate_uid == uid:
+                    return resource
+        except Exception:
+            pass
+        return None
+
+    def delete_event(self, calendar_id: str, uid: str = "", href: str = "") -> bool:
+        self._connect()
+        calendar = self._get_calendar(calendar_id)
+        resource = None
+        if href:
+            try:
+                resource = calendar.event_by_url(href)
+            except Exception:
+                resource = None
+        if resource is None and uid:
+            resource = self._find_resource_by_uid(calendar, uid)
+        if resource is None:
+            return False
+        try:
+            resource.delete()
+            return True
+        except Exception:
+            return False
