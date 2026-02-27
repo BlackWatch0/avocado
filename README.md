@@ -147,3 +147,15 @@ Admin page behavior:
 ## Test
 
 - `python -m unittest discover -s tests -v`
+
+### Integration Smoke Test (use your configured `config.yaml`)
+
+- Basic checks (CalDAV + AI + config):
+  - `python -m avocado.smoke_test`
+- Include one real sync run (manual-window):
+  - `python -m avocado.smoke_test --run-sync`
+- Custom window:
+  - `python -m avocado.smoke_test --run-sync --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T00:00:00+00:00`
+- Skip one side during troubleshooting:
+  - `python -m avocado.smoke_test --skip-ai`
+  - `python -m avocado.smoke_test --skip-caldav`
