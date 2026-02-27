@@ -1048,6 +1048,7 @@ class SyncEngine:
                         "end": serialize_datetime(saved_user_event.end),
                         "fields": [item["field"] for item in patch_fields],
                         "patch": patch_fields,
+                        "expected_etag": saved_user_event.etag,
                         "before_event": before_event.to_dict(),
                         "after_event": saved_user_event.to_dict(),
                     },
