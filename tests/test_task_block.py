@@ -6,6 +6,7 @@ from avocado.task_block import (
     AI_TASK_START,
     ensure_ai_task_block,
     parse_ai_task_block,
+    set_ai_task_category,
     strip_ai_task_block,
 )
 
@@ -35,6 +36,13 @@ class TaskBlockTests(unittest.TestCase):
         self.assertTrue(parsed["locked"])
         self.assertFalse(parsed["mandatory"])
         self.assertEqual(strip_ai_task_block(description), "Hello")
+
+    def test_set_category(self) -> None:
+        description = "Task event"
+        updated, payload, changed = set_ai_task_category(description, self.defaults, "study")
+        self.assertTrue(changed)
+        self.assertIn(AI_TASK_START, updated)
+        self.assertEqual(payload["category"], "study")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ You must respect constraints and only return JSON in this schema:
       "summary": "string",
       "location": "string",
       "description": "string",
+      "category": "string",
       "reason": "string"
     }
   ]

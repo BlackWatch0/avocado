@@ -115,6 +115,7 @@ Admin page behavior:
 - secrets are masked by default
 - leave `CalDAV password` or `AI API key` empty to keep existing values
 - click `Run Sync` then calendar list is refreshed from CalDAV
+- scheduler compares user-layer calendars (non-stage) with stage calendar to detect deltas and trigger re-planning
 - per-calendar default behavior can be configured in UI:
   - immutable/editable
   - default locked
@@ -122,6 +123,7 @@ Admin page behavior:
 - AI Base URL defaults to `https://api.openai.com/v1`
 - AI system prompt can be edited directly in admin page
 - timezone uses dropdown selection (with custom fallback option when needed)
+- `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
 
 ## Test
 

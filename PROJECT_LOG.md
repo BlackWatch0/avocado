@@ -55,6 +55,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 同步策略升级：全日历打标 + 用户层对比stage触发重排 + 分类标签 | `avocado/sync_engine.py`, `avocado/task_block.py`, `avocado/planner.py`, `avocado/models.py`, `tests/test_task_block.py`, `README.md` | 所有非stage日历事件统一补全简化版 `[AI Task]`；轮询先比对用户层(日历非stage)与stage差异再触发AI重排；AI结果写入分类标签 `category`（缺失时本地回退分类） | 风险中等；若分类不准可通过手工编辑 `[AI Task].category` 覆盖 | AVO-015 |
 | 2026-02-27 | 管理页新增 AI 连通性测试、提示词管理与时区下拉 | `avocado/web_admin.py`, `avocado/ai_client.py`, `avocado/models.py`, `avocado/planner.py`, `avocado/static/admin.js`, `avocado/templates/admin.html`, `config.example.yaml`, `tests/test_web_admin.py`, `tests/test_models.py`, `README.md` | 新增 `POST /api/ai/test` 测试 API 连通性；AI Base URL 默认 OpenAI；新增可编辑 `system_prompt`；时区改为下拉选择 | 风险低；AI 测试依赖供应商兼容的 chat/completions 接口，失败不影响核心同步流程 | AVO-014 |
 | 2026-02-27 | 管理页新增 CalDAV 日历列表与按日历默认行为配置 | `avocado/static/admin.js`, `avocado/templates/admin.html`, `avocado/static/admin.css`, `avocado/web_admin.py`, `avocado/models.py`, `avocado/sync_engine.py`, `config.example.yaml`, `tests/test_models.py`, `tests/test_web_admin.py`, `README.md` | 点击 Sync 后自动刷新 CalDAV 日历列表；可按日历配置 immutable/editable、default locked、default mandatory；新增 `per_calendar_defaults` 配置并接入同步逻辑 | 风险中等；若日历列表获取失败，配置表单仍可使用；可回滚至上个管理页版本 | AVO-013 |
 | 2026-02-27 | 新增无登录管理页面与配置编辑能力 | `avocado/web_admin.py`, `avocado/templates/admin.html`, `avocado/static/admin.css`, `avocado/static/admin.js`, `tests/test_web_admin.py`, `README.md` | 新增根路径管理页面（`/`）、新增 `GET /api/config/raw`、增强 `PUT /api/config` 密钥保留逻辑（空值或 `***` 不覆盖），支持页面保存配置与手动触发同步 | 风险中等；若页面交互异常可继续通过现有 API 运维，回滚可移除前端路由与静态资源 | AVO-012 |
@@ -78,6 +79,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-015 | 同步引擎改为用户层vs stage差异触发重排并增加分类标签 | Done | 所有非stage日历事件均有简化版 `[AI Task]`；轮询比对用户层与stage差异决定是否重排；AI变更后写入 `category` | P0 | AVO-013, AVO-014 | 2026-02-27 |
 | AVO-014 | 管理页支持 AI 测试接口、提示词管理、时区下拉 | Done | 可在管理页测试 AI API 连通性；AI 默认 Base URL 为 OpenAI；可编辑系统提示词；时区使用下拉选择 | P1 | AVO-012 | 2026-02-27 |
 | AVO-013 | 管理页支持日历列表与按日历默认行为配置 | Done | 点击 Sync 后可刷新并展示 CalDAV 日历；可按日历保存 immutable/locked/mandatory 默认行为并被同步引擎使用 | P1 | AVO-012 | 2026-02-27 |
 | AVO-012 | 无登录管理页面（展示并修改 config） | Done | 根路径可访问管理页；可展示全部配置；保存配置与手动同步可用；密钥留空不覆盖 | P1 | AVO-007 | 2026-02-27 |

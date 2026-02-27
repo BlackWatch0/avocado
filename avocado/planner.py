@@ -46,7 +46,7 @@ def normalize_changes(raw_changes: list[dict[str, Any]]) -> list[dict[str, Any]]
             "calendar_id": calendar_id,
             "uid": uid,
         }
-        for field in ("start", "end", "summary", "location", "description", "reason"):
+        for field in ("start", "end", "summary", "location", "description", "category", "reason"):
             if field in item and item[field] is not None:
                 cleaned[field] = item[field]
         normalized.append(cleaned)

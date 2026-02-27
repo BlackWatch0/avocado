@@ -18,7 +18,7 @@ from avocado.models import (
 from avocado.planner import build_messages, build_planning_payload, normalize_changes
 from avocado.reconciler import apply_change
 from avocado.state_store import StateStore
-from avocado.task_block import ensure_ai_task_block
+from avocado.task_block import ensure_ai_task_block, set_ai_task_category
 
 
 def _hash_text(value: str) -> str:
@@ -28,6 +28,35 @@ def _hash_text(value: str) -> str:
 def _staging_uid(calendar_id: str, uid: str) -> str:
     prefix = hashlib.sha1(calendar_id.encode("utf-8")).hexdigest()[:10]  # nosec B324
     return f"{prefix}:{uid}"
+
+
+def _event_fingerprint(event: EventRecord) -> str:
+    return _hash_text(
+        f"{event.summary}|{event.description}|{event.location}|"
+        f"{serialize_datetime(event.start)}|{serialize_datetime(event.end)}"
+    )
+
+
+def _infer_category(event: EventRecord, change: dict[str, Any]) -> str:
+    text = " ".join(
+        [
+            str(change.get("category", "")),
+            str(change.get("summary", event.summary)),
+            str(change.get("description", event.description)),
+            str(change.get("reason", "")),
+        ]
+    ).lower()
+    if any(k in text for k in ["class", "课程", "lecture", "school", "study"]):
+        return "study"
+    if any(k in text for k in ["meeting", "会议", "sync", "review", "standup"]):
+        return "meeting"
+    if any(k in text for k in ["gym", "workout", "exercise", "健身", "跑步"]):
+        return "health"
+    if any(k in text for k in ["travel", "trip", "flight", "出行", "航班"]):
+        return "travel"
+    if any(k in text for k in ["family", "home", "家庭", "父母"]):
+        return "family"
+    return "general"
 
 
 class SyncEngine:
@@ -117,6 +146,12 @@ class SyncEngine:
             all_events: list[EventRecord] = []
             mutable_events: dict[tuple[str, str], EventRecord] = {}
             baseline_etags: dict[tuple[str, str], str] = {}
+            should_replan = trigger in {"manual", "startup"}
+            stage_events = caldav_service.fetch_events(
+                staging_info.calendar_id, window_start, window_end
+            )
+            stage_map = {evt.uid: evt for evt in stage_events if evt.uid}
+            seen_stage_uids: set[str] = set()
 
             for calendar in calendars:
                 if calendar.calendar_id == staging_info.calendar_id:
@@ -129,8 +164,28 @@ class SyncEngine:
                         continue
 
                     if calendar_is_immutable:
-                        event.locked = True
-                        event.mandatory = True
+                        behavior = per_calendar_defaults.get(calendar.calendar_id, {})
+                        task_defaults = TaskDefaultsConfig(
+                            locked=bool(behavior.get("locked", True)),
+                            mandatory=bool(behavior.get("mandatory", True)),
+                            editable_fields=list(config.task_defaults.editable_fields),
+                        )
+                        new_description, task_payload, changed = ensure_ai_task_block(
+                            event.description,
+                            task_defaults,
+                        )
+                        event.description = new_description
+                        event.locked = bool(task_payload.get("locked", True))
+                        event.mandatory = bool(task_payload.get("mandatory", True))
+
+                        if changed:
+                            event = caldav_service.upsert_event(calendar.calendar_id, event)
+                            self.state_store.record_audit_event(
+                                calendar_id=calendar.calendar_id,
+                                uid=event.uid,
+                                action="seed_or_normalize_ai_task",
+                                details={"trigger": trigger, "layer": "immutable"},
+                            )
                     else:
                         behavior = per_calendar_defaults.get(calendar.calendar_id, {})
                         task_defaults = TaskDefaultsConfig(
@@ -143,8 +198,8 @@ class SyncEngine:
                             task_defaults,
                         )
                         event.description = new_description
-                        event.locked = bool(task_payload.get("locked", False))
-                        event.mandatory = bool(task_payload.get("mandatory", False))
+                        event.locked = bool(task_payload.get("locked", task_defaults.locked))
+                        event.mandatory = bool(task_payload.get("mandatory", task_defaults.mandatory))
 
                         if changed:
                             event = caldav_service.upsert_event(calendar.calendar_id, event)
@@ -152,16 +207,17 @@ class SyncEngine:
                                 calendar_id=calendar.calendar_id,
                                 uid=event.uid,
                                 action="seed_or_normalize_ai_task",
-                                details={"trigger": trigger},
+                                details={"trigger": trigger, "layer": "user"},
                             )
+
+                        stage_uid = _staging_uid(calendar.calendar_id, event.uid)
+                        seen_stage_uids.add(stage_uid)
+                        stage_event = stage_map.get(stage_uid)
+                        if stage_event is None or _event_fingerprint(stage_event) != _event_fingerprint(event):
+                            should_replan = True
 
                         mutable_events[(calendar.calendar_id, event.uid)] = event
                         baseline_etags[(calendar.calendar_id, event.uid)] = event.etag
-                        self._mirror_to_staging(
-                            caldav_service=caldav_service,
-                            staging_calendar_id=staging_info.calendar_id,
-                            source_event=event,
-                        )
 
                     all_events.append(event)
                     self.state_store.upsert_snapshot(
@@ -173,9 +229,15 @@ class SyncEngine:
                         ),
                     )
 
+            # If stage has events missing from current user layer, trigger a replan.
+            for stage_uid in stage_map.keys():
+                if stage_uid not in seen_stage_uids:
+                    should_replan = True
+                    break
+
             ai_client = OpenAICompatibleClient(config.ai)
             raw_changes: list[dict[str, Any]] = []
-            if ai_client.is_configured():
+            if ai_client.is_configured() and should_replan:
                 planning_payload = build_planning_payload(
                     events=all_events,
                     immutable_calendar_ids=sorted(immutable_calendar_ids),
@@ -218,13 +280,17 @@ class SyncEngine:
                     continue
 
                 saved_user_event = caldav_service.upsert_event(event.calendar_id, outcome.event)
+                category = str(change.get("category", "")).strip() or _infer_category(saved_user_event, change)
+                new_description, _, category_changed = set_ai_task_category(
+                    saved_user_event.description,
+                    config.task_defaults,
+                    category,
+                )
+                if category_changed:
+                    saved_user_event.description = new_description
+                    saved_user_event = caldav_service.upsert_event(event.calendar_id, saved_user_event)
                 mutable_events[key] = saved_user_event
                 baseline_etags[key] = saved_user_event.etag
-                self._mirror_to_staging(
-                    caldav_service=caldav_service,
-                    staging_calendar_id=staging_info.calendar_id,
-                    source_event=saved_user_event,
-                )
                 changes_applied += 1
                 self.state_store.record_audit_event(
                     calendar_id=event.calendar_id,
@@ -232,8 +298,17 @@ class SyncEngine:
                     action="apply_ai_change",
                     details={
                         "trigger": trigger,
+                        "category": category,
                         "fields": sorted([field for field in change.keys() if field not in {"calendar_id", "uid"}]),
                     },
+                )
+
+            # Stage layer holds AI-processed baseline for next diff.
+            for user_event in mutable_events.values():
+                self._mirror_to_staging(
+                    caldav_service=caldav_service,
+                    staging_calendar_id=staging_info.calendar_id,
+                    source_event=user_event,
                 )
 
             duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)

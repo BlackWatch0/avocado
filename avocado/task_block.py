@@ -23,15 +23,8 @@ def build_default_task(defaults: TaskDefaultsConfig) -> dict[str, Any]:
         "locked": bool(defaults.locked),
         "mandatory": bool(defaults.mandatory),
         "editable_fields": list(defaults.editable_fields or DEFAULT_EDITABLE_FIELDS),
+        "category": "uncategorized",
         "user_intent": "",
-        "constraints": {
-            "earliest_start": None,
-            "latest_end": None,
-            "avoid_overlap_with_mandatory": True,
-        },
-        "priority": "medium",
-        "source": "system",
-        "last_editor": "system",
         "updated_at": _now_iso(),
     }
 
@@ -63,14 +56,9 @@ def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dic
         editable_fields = defaults.editable_fields
     cleaned = [str(x).strip() for x in editable_fields if str(x).strip()]
     normalized["editable_fields"] = cleaned or list(DEFAULT_EDITABLE_FIELDS)
-    constraints = normalized.get("constraints", {})
-    if not isinstance(constraints, dict):
-        constraints = {}
-    default_constraints = normalized["constraints"]
-    default_constraints.update(constraints)
-    normalized["constraints"] = default_constraints
     normalized["locked"] = bool(normalized.get("locked", defaults.locked))
     normalized["mandatory"] = bool(normalized.get("mandatory", defaults.mandatory))
+    normalized["category"] = str(normalized.get("category", "uncategorized")).strip() or "uncategorized"
     normalized["updated_at"] = str(normalized.get("updated_at") or _now_iso())
     return normalized
 
@@ -102,4 +90,19 @@ def ensure_ai_task_block(
     updated_description = upsert_ai_task_block(description, normalized)
     changed = normalized != parsed or updated_description != description
     return updated_description, normalized, changed
+
+
+def set_ai_task_category(
+    description: str,
+    defaults: TaskDefaultsConfig,
+    category: str,
+) -> tuple[str, dict[str, Any], bool]:
+    updated_description, task_payload, changed = ensure_ai_task_block(description, defaults)
+    normalized_category = str(category).strip() or "uncategorized"
+    if task_payload.get("category") == normalized_category:
+        return updated_description, task_payload, changed
+    task_payload["category"] = normalized_category
+    task_payload["updated_at"] = _now_iso()
+    final_description = upsert_ai_task_block(updated_description, task_payload)
+    return final_description, task_payload, True
 
