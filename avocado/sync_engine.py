@@ -649,22 +649,13 @@ class SyncEngine:
                             mandatory=bool(behavior.get("mandatory", config.task_defaults.mandatory)),
                             editable_fields=list(config.task_defaults.editable_fields),
                         )
-                        new_description, task_payload, changed = ensure_ai_task_block(
-                            event.description,
-                            task_defaults,
-                        )
-                        event.description = new_description
-                        event.locked = bool(task_payload.get("locked", task_defaults.locked))
-                        event.mandatory = bool(task_payload.get("mandatory", task_defaults.mandatory))
-
-                        if changed:
-                            event = caldav_service.upsert_event(calendar.calendar_id, event)
-                            self.state_store.record_audit_event(
-                                calendar_id=calendar.calendar_id,
-                                uid=event.uid,
-                                action="seed_or_normalize_ai_task",
-                                details={"trigger": trigger, "layer": "user"},
-                            )
+                        parsed_task_payload = parse_ai_task_block(event.description or "")
+                        if isinstance(parsed_task_payload, dict):
+                            event.locked = bool(parsed_task_payload.get("locked", task_defaults.locked))
+                            event.mandatory = bool(parsed_task_payload.get("mandatory", task_defaults.mandatory))
+                        else:
+                            event.locked = task_defaults.locked
+                            event.mandatory = task_defaults.mandatory
 
                         # Seed user-layer event from non-stage/non-user calendars if missing.
                         if _managed_uid_prefix_depth(event.uid) >= 2:
