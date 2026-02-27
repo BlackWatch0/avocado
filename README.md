@@ -159,3 +159,13 @@ Admin page behavior:
 - Skip one side during troubleshooting:
   - `python -m avocado.smoke_test --skip-ai`
   - `python -m avocado.smoke_test --skip-caldav`
+
+### Real E2E Sync Suite (writes test events, triggers sync, keeps logs)
+
+- Run full suite (config read/write, fixed-schedule protection, AI move instruction, immutable mirror check):
+  - `python -m avocado.e2e_sync_suite`
+- Optional custom window:
+  - `python -m avocado.e2e_sync_suite --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T23:59:59+00:00`
+- Test logs:
+  - saved under `data/test_logs/e2e_sync_suite_<timestamp>.log`
+  - script also prints JSON summary to stdout
