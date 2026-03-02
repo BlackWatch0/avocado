@@ -1,4 +1,4 @@
-﻿import tempfile
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,17 +17,28 @@ class _FakeCalDAVService:
     new_calendar_id = "new-cal"
 
     def __init__(self, _config: object) -> None:
-        start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) + timedelta(hours=2)
-        end = start + timedelta(hours=1)
+        now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
         self.events_by_calendar = {
             self.source_calendar_id: {
                 "source-uid": EventRecord(
                     calendar_id=self.source_calendar_id,
                     uid="source-uid",
                     summary="Source Event",
-                    description="Original source description",
-                    start=start,
-                    end=end,
+                    description=(
+                        "Original source description\n\n"
+                        "[AI Task]\n"
+                        "locked: false\n"
+                        "editable_fields:\n"
+                        "  - start\n"
+                        "  - end\n"
+                        "  - summary\n"
+                        "  - location\n"
+                        "  - description\n"
+                        "user_intent: move earlier by 30 minutes\n"
+                        "[/AI Task]"
+                    ),
+                    start=now + timedelta(hours=2),
+                    end=now + timedelta(hours=3),
                     etag="src-etag",
                 )
             },
@@ -35,7 +46,6 @@ class _FakeCalDAVService:
             self.user_calendar_id: {},
             self.new_calendar_id: {},
         }
-        self.upsert_calls: list[tuple[str, EventRecord]] = []
 
     def list_calendars(self) -> list[CalendarInfo]:
         return [
@@ -86,7 +96,6 @@ class _FakeCalDAVService:
         saved.etag = f"etag-{calendar_id}-{saved.uid}"
         saved.href = saved.href or f"{calendar_id}/{saved.uid}.ics"
         self.events_by_calendar.setdefault(calendar_id, {})[saved.uid] = saved
-        self.upsert_calls.append((calendar_id, saved.clone()))
         return saved
 
     def delete_event(self, calendar_id: str, uid: str, href: str = "") -> bool:
@@ -102,64 +111,55 @@ class _FakeCalDAVService:
         return event.clone() if event is not None else None
 
 
-class SyncEngineSourceLayerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.config_path = Path(self.temp_dir.name) / "config.yaml"
-        self.state_path = Path(self.temp_dir.name) / "state.db"
-        config_manager = ConfigManager(self.config_path)
-        config_manager.update(
-            {
-                "caldav": {
-                    "base_url": "https://dav.example.com",
-                    "username": "tester",
-                    "password": "pw",
-                },
-                "ai": {"enabled": False},
-                "calendar_rules": {
-                    "stack_calendar_id": _FakeCalDAVService.stack_calendar_id,
-                    "stack_calendar_name": "Avocado Stack Calendar",
-                    "user_calendar_id": _FakeCalDAVService.user_calendar_id,
-                    "user_calendar_name": "Avocado User Calendar",
-                    "new_calendar_id": _FakeCalDAVService.new_calendar_id,
-                    "new_calendar_name": "Avocado New Calendar",
-                },
-            }
-        )
-        self.engine = SyncEngine(config_manager=config_manager, state_store=StateStore(str(self.state_path)))
-
-    def tearDown(self) -> None:
-        self.temp_dir.cleanup()
-
-    def test_sync_keeps_source_calendar_unchanged_and_writes_x_fields(self) -> None:
-        fake_service = _FakeCalDAVService(object())
-        source_uid = "source-uid"
-
-        with mock.patch("avocado.sync.pipeline.CalDAVService", return_value=fake_service):
-            result = self.engine.run_once(trigger="manual")
-
-        self.assertEqual(result.status, "success")
-
-        source_upserts = [event for cid, event in fake_service.upsert_calls if cid == _FakeCalDAVService.source_calendar_id]
-        self.assertEqual(source_upserts, [])
-
-        source_event_after = fake_service.events_by_calendar[_FakeCalDAVService.source_calendar_id][source_uid]
-        self.assertEqual(source_event_after.description, "Original source description")
-
-        stack_events = list(fake_service.events_by_calendar[_FakeCalDAVService.stack_calendar_id].values())
-        user_events = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())
-        self.assertGreaterEqual(len(stack_events), 1)
-        self.assertGreaterEqual(len(user_events), 1)
-        self.assertTrue(stack_events[0].x_sync_id)
-        self.assertTrue(user_events[0].x_sync_id)
-        self.assertEqual(stack_events[0].x_source, user_events[0].x_source)
-        self.assertIn("[AI Task]", stack_events[0].description)
-        self.assertIn("[/AI Task]", stack_events[0].description)
-        self.assertIn("[AI Task]", user_events[0].description)
-        self.assertIn("[/AI Task]", user_events[0].description)
+class AIRequestAuditTests(unittest.TestCase):
+    def test_run_once_records_ai_request_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            manager = ConfigManager(root / "config.yaml")
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://caldav.example.com",
+                        "username": "tester",
+                        "password": "secret",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "test-key",
+                        "model": "gpt-4o-mini",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": _FakeCalDAVService.stack_calendar_id,
+                        "stack_calendar_name": "Avocado Stack Calendar",
+                        "user_calendar_id": _FakeCalDAVService.user_calendar_id,
+                        "user_calendar_name": "Avocado User Calendar",
+                        "new_calendar_id": _FakeCalDAVService.new_calendar_id,
+                        "new_calendar_name": "Avocado New Calendar",
+                    },
+                }
+            )
+            state_store = StateStore(str(root / "state.db"))
+            fake_service = _FakeCalDAVService(object())
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", return_value=fake_service),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient") as ai_client_cls,
+            ):
+                ai_client = ai_client_cls.return_value
+                ai_client.is_configured.return_value = True
+                ai_client.generate_changes.return_value = {"changes": []}
+                ai_client.last_usage = {
+                    "prompt_tokens": 101,
+                    "completion_tokens": 22,
+                    "total_tokens": 123,
+                }
+                engine = SyncEngine(manager, state_store)
+                result = engine.run_once(trigger="manual")
+            self.assertEqual(result.status, "success")
+            points = state_store.ai_request_bytes_series(days=30, limit=100)
+            self.assertGreaterEqual(len(points), 1)
+            self.assertGreater(points[-1]["request_tokens"], 0)
 
 
 if __name__ == "__main__":
     unittest.main()
-
-

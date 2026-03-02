@@ -17,6 +17,8 @@ from avocado.sync.helpers_intent import (
     _extract_editable_fields,
     _extract_user_intent,
 )
+from avocado.task_block import ensure_ai_task_block
+from avocado.timezone_utils import resolve_effective_timezone
 
 
 class PipelineMixin:
@@ -109,8 +111,13 @@ class PipelineMixin:
                 )
                 self.state_store.set_meta("engine_rollout_mode", self.ROLLOUT_MODE)
 
+            effective_timezone = resolve_effective_timezone(
+                configured_timezone=config.sync.timezone,
+                timezone_source=getattr(config.sync, "timezone_source", "host"),
+            )
             window_start, window_end = self._window_bounds(
                 window_days=config.sync.window_days,
+                timezone_name=effective_timezone,
                 start_override=window_start_override,
                 end_override=window_end_override,
             )
@@ -122,7 +129,7 @@ class PipelineMixin:
                 details={
                     "window_start": serialize_datetime(window_start),
                     "window_end": serialize_datetime(window_end),
-                    "timezone": "Europe/London",
+                    "timezone": effective_timezone,
                     "manual_window": window_start_override is not None,
                 },
             )
@@ -359,6 +366,13 @@ class PipelineMixin:
             for sync_id, event in sorted(stack_state.items(), key=lambda pair: pair[0]):
                 if sync_id in deleted_sync_ids:
                     continue
+                # Ensure managed layers always carry a normalized [AI Task] block.
+                normalized_description, _, description_changed = ensure_ai_task_block(
+                    event.description or "",
+                    config.task_defaults,
+                )
+                if description_changed:
+                    event.description = normalized_description
                 planning_events.append(event)
                 if event.uid:
                     stack_uid_to_sync_id[event.uid] = sync_id
@@ -400,11 +414,33 @@ class PipelineMixin:
                         events=planning_events,
                         window_start=serialize_datetime(window_start) or "",
                         window_end=serialize_datetime(window_end) or "",
-                        timezone="Europe/London",
+                        timezone=effective_timezone,
                         target_events=target_events_payload,
                     )
                     messages = build_messages(payload, system_prompt=config.ai.system_prompt)
+                    request_payload = {
+                        "model": config.ai.model,
+                        "messages": messages,
+                        "temperature": 0.2,
+                        "response_format": {"type": "json_object"},
+                    }
+                    request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
                     raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
+                    usage = dict(getattr(ai_client, "last_usage", {}) or {})
+                    _audit(
+                        calendar_id="system",
+                        uid="ai",
+                        action="ai_request",
+                        details={
+                            "request_bytes": request_bytes,
+                            "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                            "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+                            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                            "target_events_count": len(target_events_payload),
+                            "planning_events_count": len(planning_events),
+                            "ai_input_hash": ai_input_hash,
+                        },
+                    )
                 else:
                     _audit(calendar_id="system", uid="ai", action="skip_ai_not_configured", details={})
             elif not config.ai.enabled:
@@ -737,7 +773,3 @@ class PipelineMixin:
                 conflicts=conflicts,
                 trigger=trigger,
             )
-
-
-
-

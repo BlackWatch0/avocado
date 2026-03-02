@@ -182,7 +182,30 @@ const loadConfig = async () => {
   setStatus(state, dom.statusEl, t, "info", "status.loading_config");
   const data = await apiGetJson("/api/config/raw", t("error.load_config_failed"));
   bindConfig({ cfg: data.config || {}, t, ensureSelectOption, joinList });
+  await loadSystemTimezone({ silent: true });
   setStatus(state, dom.statusEl, t, "success", "status.config_loaded");
+};
+
+const loadSystemTimezone = async ({ silent = false } = {}) => {
+  try {
+    const data = await apiGetJson("/api/system/timezone", t("error.load_system_timezone_failed"));
+    if (dom.hostTimezoneCode) {
+      dom.hostTimezoneCode.textContent = String(data.host_timezone || "UTC");
+    }
+    if (dom.effectiveTimezoneCode) {
+      dom.effectiveTimezoneCode.textContent = String(data.effective_timezone || "UTC");
+    }
+    if (dom.timezoneSourceSelect && dom.timezoneSelect) {
+      dom.timezoneSourceSelect.value = data.timezone_source === "manual" ? "manual" : "host";
+      dom.timezoneSelect.disabled = dom.timezoneSourceSelect.value !== "manual";
+    }
+  } catch (err) {
+    if (!silent) {
+      setStatus(state, dom.statusEl, t, "error", "status.error", {
+        detail: err.message || t("error.load_system_timezone_failed"),
+      });
+    }
+  }
 };
 
 const loadCalendars = async () => {
@@ -316,6 +339,7 @@ const saveConfig = async () => {
     await loadConfig();
     await loadCalendars();
     await loadAiChanges();
+    await loadSystemTimezone({ silent: true });
     await loadAiRequestMetrics({ silent: true });
     setStatus(state, dom.statusEl, t, "success", "status.config_saved");
   } catch (err) {
@@ -391,6 +415,35 @@ const refreshCalendars = async () => {
   }
 };
 
+const replaceAiModelOptions = (modelEl, models, preferredModel = "") => {
+  if (!modelEl) return;
+  const normalized = Array.isArray(models)
+    ? [...new Set(models.map((x) => String(x || "").trim()).filter(Boolean))]
+    : [];
+  const selected = String(preferredModel || modelEl.value || "").trim();
+
+  modelEl.innerHTML = "";
+  const emptyOption = document.createElement("option");
+  emptyOption.value = "";
+  emptyOption.textContent = "-";
+  modelEl.appendChild(emptyOption);
+
+  normalized.forEach((modelId) => {
+    const option = document.createElement("option");
+    option.value = modelId;
+    option.textContent = modelId;
+    modelEl.appendChild(option);
+  });
+
+  if (selected && normalized.includes(selected)) {
+    modelEl.value = selected;
+  } else if (normalized.length) {
+    modelEl.value = normalized[0];
+  } else {
+    modelEl.value = "";
+  }
+};
+
 const testAiConnectivity = async () => {
   withPending(dom.aiTestLink, true);
   try {
@@ -398,14 +451,9 @@ const testAiConnectivity = async () => {
     const data = await apiPost("/api/ai/test", t("error.ai_test_failed"));
     const message = (data.message || "").trim();
     const modelEl = document.getElementById("ai-model");
-    const currentModel = modelEl.value;
-    const models = Array.isArray(data.models) ? data.models.map((x) => String(x || "").trim()).filter(Boolean) : [];
-    models.forEach((modelId) => ensureSelectOption(modelEl, modelId, modelId, false));
-    if (currentModel) {
-      ensureSelectOption(modelEl, currentModel, currentModel, true);
-    } else if (models.length) {
-      modelEl.value = models.includes(modelEl.value) ? modelEl.value : models[0];
-    }
+    const currentModel = modelEl?.value || "";
+    const models = Array.isArray(data.models) ? data.models : [];
+    replaceAiModelOptions(modelEl, models, currentModel);
     if (data.ok) {
       setStatus(state, dom.statusEl, t, "success", "status.ai_ok", { message });
     } else {
@@ -496,6 +544,11 @@ dom.refreshAiBytesBtn.addEventListener("click", refreshAiBytes);
 dom.tabConfigBtn.addEventListener("click", () => setActiveTab(dom, "config"));
 dom.tabCalendarsBtn.addEventListener("click", () => setActiveTab(dom, "calendars"));
 dom.tabLogsBtn.addEventListener("click", () => setActiveTab(dom, "logs"));
+if (dom.timezoneSourceSelect && dom.timezoneSelect) {
+  dom.timezoneSourceSelect.addEventListener("change", () => {
+    dom.timezoneSelect.disabled = dom.timezoneSourceSelect.value !== "manual";
+  });
+}
 window.addEventListener("resize", () =>
   renderAiBytesChart({ canvas: dom.aiBytesChartCanvas, records: state.latestAiRequestMetrics, t, formatShortTime })
 );

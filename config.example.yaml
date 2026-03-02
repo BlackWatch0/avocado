@@ -9,6 +9,9 @@ ai:
   api_key: "sk-..."
   model: "gpt-4o-mini"
   timeout_seconds: 90
+  payload_logging_enabled: false
+  payload_log_path: "data/test_logs/ai_payload_exchange.jsonl"
+  payload_log_max_chars: 200000
   system_prompt: |
     You are Avocado, an AI schedule planner.
     You must respect constraints and only return JSON in this schema:
@@ -35,6 +38,7 @@ ai:
 sync:
   window_days: 7
   interval_seconds: 300
+  timezone_source: "host"  # host | manual
   freeze_hours: 0
   timezone: "UTC"
 

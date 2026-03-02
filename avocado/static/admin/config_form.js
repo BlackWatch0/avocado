@@ -19,6 +19,11 @@
   document.getElementById("sync-window-days").value = cfg.sync?.window_days ?? 7;
   document.getElementById("sync-interval-seconds").value = cfg.sync?.interval_seconds ?? 300;
   document.getElementById("sync-freeze-hours").value = cfg.sync?.freeze_hours ?? 0;
+  const timezoneSourceEl = document.getElementById("sync-timezone-source");
+  const timezoneSourceValue = cfg.sync?.timezone_source === "manual" ? "manual" : "host";
+  if (timezoneSourceEl) {
+    timezoneSourceEl.value = timezoneSourceValue;
+  }
   const timezoneEl = document.getElementById("sync-timezone");
   const tzValue = cfg.sync?.timezone || "UTC";
   if (![...timezoneEl.options].some((opt) => opt.value === tzValue)) {
@@ -28,6 +33,7 @@
     timezoneEl.appendChild(customOption);
   }
   timezoneEl.value = tzValue;
+  timezoneEl.disabled = timezoneSourceValue !== "manual";
 
   document.getElementById("rules-stack-calendar-id").value =
     cfg.calendar_rules?.stack_calendar_id || "";
@@ -76,6 +82,7 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
       window_days: windowDays,
       interval_seconds: intervalSeconds,
       freeze_hours: freezeHours,
+      timezone_source: document.getElementById("sync-timezone-source")?.value || "host",
       timezone: document.getElementById("sync-timezone").value.trim(),
     },
     calendar_rules: {

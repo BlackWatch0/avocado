@@ -49,7 +49,7 @@ Avocado is a CalDAV-oriented AI scheduling service that can:
 2. Edit `config.yaml`:
    - `caldav.base_url`, `caldav.username`, `caldav.password`
    - `ai.base_url`, `ai.api_key`, `ai.model`
-   - optional `sync.window_days`, `sync.interval_seconds`, `sync.timezone`
+   - optional `sync.window_days`, `sync.interval_seconds`, `sync.timezone_source`, `sync.timezone`
 
 ### 3. Admin Port Mapping
 
@@ -100,6 +100,7 @@ Recommendation:
 - `GET /` (admin page)
 - `GET /api/config`
 - `GET /api/config/raw`
+- `GET /api/system/timezone`
 - `PUT /api/config`
 - `POST /api/ai/test`
 - `GET /api/calendars`
@@ -135,9 +136,12 @@ Admin page behavior:
   - manual override available from the language selector in header
 - `[AI Task]` block is simplified and includes key fields: `locked`, `editable_fields`, `category`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
-- logs page includes an AI request-bytes line chart (derived from audit action `ai_request`)
-- AI request-bytes chart auto refreshes every 30s and supports custom retention days (default 90)
+- logs page includes an AI token-usage line chart (derived from audit action `ai_request`)
+- AI token-usage chart auto refreshes every 30s and supports custom retention days (default 90)
 - admin page supports one-click custom time-range sync (start/end datetime)
+- optional AI payload test logging:
+  - set `ai.payload_logging_enabled: true`
+  - payload I/O saved to `ai.payload_log_path` (default `data/test_logs/ai_payload_exchange.jsonl`)
 
 ## Test
 
@@ -176,4 +180,3 @@ Admin page behavior:
   - calendar assertions: event exists in `user` + `stack`, raw uid removed from `new`
 - Logs:
   - saved under `data/test_logs/user_cases_<timestamp>.json`
-

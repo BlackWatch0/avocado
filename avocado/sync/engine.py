@@ -32,6 +32,7 @@ class SyncEngine(WritebackMixin, PipelineMixin):
     def _window_bounds(
         *,
         window_days: int,
+        timezone_name: str,
         start_override: datetime | None,
         end_override: datetime | None,
     ) -> tuple[datetime, datetime]:
@@ -44,8 +45,11 @@ class SyncEngine(WritebackMixin, PipelineMixin):
                 raise ValueError("window_end_override must be later than window_start_override")
             return start_utc, end_utc
 
-        london_tz = ZoneInfo("Europe/London")
-        now_local = datetime.now(london_tz)
+        try:
+            local_tz = ZoneInfo(str(timezone_name or "UTC"))
+        except Exception:
+            local_tz = ZoneInfo("UTC")
+        now_local = datetime.now(local_tz)
         start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         end_local = start_local + timedelta(days=max(1, int(window_days)))
         return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
@@ -200,4 +204,3 @@ class SyncEngine(WritebackMixin, PipelineMixin):
         merged.end = user_event.end
         merged.locked = bool(user_event.locked)
         return merged
-

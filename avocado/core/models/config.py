@@ -30,6 +30,9 @@ class AIConfig:
     timeout_seconds: int = 90
     enabled: bool = True
     system_prompt: str = DEFAULT_AI_SYSTEM_PROMPT
+    payload_logging_enabled: bool = False
+    payload_log_path: str = "data/test_logs/ai_payload_exchange.jsonl"
+    payload_log_max_chars: int = 200000
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AIConfig":
@@ -43,6 +46,12 @@ class AIConfig:
             enabled=bool(data.get("enabled", True)),
             system_prompt=str(data.get("system_prompt", DEFAULT_AI_SYSTEM_PROMPT)).strip()
             or DEFAULT_AI_SYSTEM_PROMPT,
+            payload_logging_enabled=bool(data.get("payload_logging_enabled", False)),
+            payload_log_path=str(
+                data.get("payload_log_path", "data/test_logs/ai_payload_exchange.jsonl")
+            ).strip()
+            or "data/test_logs/ai_payload_exchange.jsonl",
+            payload_log_max_chars=max(1000, int(data.get("payload_log_max_chars", 200000))),
         )
 
 
@@ -51,15 +60,20 @@ class SyncConfig:
     window_days: int = 7
     interval_seconds: int = 300
     timezone: str = "UTC"
+    timezone_source: str = "host"
     freeze_hours: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "SyncConfig":
         data = data or {}
+        timezone_source = str(data.get("timezone_source", "host")).strip().lower() or "host"
+        if timezone_source not in {"host", "manual"}:
+            timezone_source = "host"
         return cls(
             window_days=max(1, int(data.get("window_days", 7))),
             interval_seconds=max(30, int(data.get("interval_seconds", 300))),
             timezone=str(data.get("timezone", "UTC")).strip() or "UTC",
+            timezone_source=timezone_source,
             freeze_hours=max(0, int(data.get("freeze_hours", 0))),
         )
 

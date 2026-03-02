@@ -55,6 +55,15 @@ class WebAdminTests(unittest.TestCase):
         self.assertTrue(data["meta"]["caldav"]["password"]["is_masked"])
         self.assertTrue(data["meta"]["ai"]["api_key"]["is_masked"])
 
+    def test_system_timezone_endpoint(self) -> None:
+        resp = self.client.get("/api/system/timezone")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("host_timezone", data)
+        self.assertIn("effective_timezone", data)
+        self.assertIn("timezone_source", data)
+        self.assertIn("configured_timezone", data)
+
     def test_put_config_empty_secret_does_not_override(self) -> None:
         update = {
             "caldav": {"base_url": "https://dav-2.example.com", "password": ""},
@@ -127,6 +136,26 @@ class WebAdminTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertIn("Connected", data["message"])
         self.assertEqual(data["models"], ["gpt-4o-mini", "gpt-4.1-mini"])
+
+    def test_ai_connectivity_records_ai_request_tokens_metric(self) -> None:
+        def _fake_test_connectivity(client_self) -> tuple[bool, str]:
+            client_self.last_usage = {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
+            return True, "Connected. Model response: OK"
+
+        with mock.patch(
+            "avocado.web_admin.routes.ai.OpenAICompatibleClient.test_connectivity",
+            side_effect=_fake_test_connectivity,
+        ), mock.patch(
+            "avocado.web_admin.routes.ai.OpenAICompatibleClient.list_models",
+            return_value=["gpt-4o-mini"],
+        ):
+            resp = self.client.post("/api/ai/test")
+        self.assertEqual(resp.status_code, 200)
+        metric_resp = self.client.get("/api/metrics/ai-request-bytes?days=90&limit=100")
+        self.assertEqual(metric_resp.status_code, 200)
+        points = metric_resp.json().get("points", [])
+        self.assertGreaterEqual(len(points), 1)
+        self.assertGreater(int(points[-1].get("request_tokens", 0)), 0)
 
     def test_calendars_marks_managed_duplicates(self) -> None:
         update = {
@@ -378,22 +407,21 @@ class WebAdminTests(unittest.TestCase):
             calendar_id="system",
             uid="ai",
             action="ai_request",
-            details={"request_bytes": 1234},
+            details={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
         )
         self.client.app.state.context.state_store.record_audit_event(
             calendar_id="system",
             uid="ai",
             action="ai_request",
-            details={"request_bytes": 4321},
+            details={"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
         )
         resp = self.client.get("/api/metrics/ai-request-bytes?days=90&limit=100")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["days"], 90)
         self.assertGreaterEqual(len(data["points"]), 2)
-        self.assertIn("request_bytes", data["points"][-1])
+        self.assertIn("request_tokens", data["points"][-1])
 
 
 if __name__ == "__main__":
     unittest.main()
-

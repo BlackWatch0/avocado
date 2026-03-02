@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -15,8 +16,31 @@ def register_ai_routes(app: FastAPI) -> None:
     @app.post("/api/ai/test")
     def test_ai_connectivity() -> dict[str, Any]:
         config = app.state.context.config_manager.load()
+        request_payload = {
+            "model": config.ai.model,
+            "messages": [{"role": "user", "content": "Reply with: OK"}],
+            "temperature": 0,
+            "max_tokens": 8,
+        }
+        request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
         client = OpenAICompatibleClient(config.ai)
         ok, message = client.test_connectivity()
+        usage = dict(getattr(client, "last_usage", {}) or {})
+        app.state.context.state_store.record_audit_event(
+            calendar_id="system",
+            uid="ai",
+            action="ai_request",
+            details={
+                "trigger": "admin_ai_test",
+                "request_bytes": request_bytes,
+                "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+                "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                "target_events_count": 0,
+                "planning_events_count": 0,
+                "ai_input_hash": "",
+            },
+        )
         models = client.list_models() if ok else []
         return {"ok": ok, "message": message, "models": models}
 

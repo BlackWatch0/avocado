@@ -5,7 +5,12 @@ from typing import Any
 from avocado.core.models import CalendarInfo, CalDAVConfig
 from avocado.integrations.caldav.calendar_ops import CalendarOpsMixin
 from avocado.integrations.caldav.delta_ops import DeltaOpsMixin
-from avocado.integrations.caldav.helpers import caldav, normalize_calendar_id, normalize_calendar_name
+from avocado.integrations.caldav.helpers import (
+    caldav,
+    normalize_calendar_id,
+    normalize_calendar_name,
+    normalize_calendar_path,
+)
 
 
 class CalDAVService(CalendarOpsMixin, DeltaOpsMixin):
@@ -49,6 +54,14 @@ class CalDAVService(CalendarOpsMixin, DeltaOpsMixin):
         for calendar in self._principal.calendars():
             cid = str(calendar.url)
             self._calendar_cache[cid] = calendar
+        target_norm = normalize_calendar_id(calendar_id)
+        target_path = normalize_calendar_path(calendar_id)
+        if target_norm or target_path:
+            for cid, calendar in self._calendar_cache.items():
+                if target_norm and normalize_calendar_id(cid) == target_norm:
+                    return calendar
+                if target_path and normalize_calendar_path(cid) == target_path:
+                    return calendar
         if calendar_id not in self._calendar_cache:
             raise RuntimeError(f"Calendar not found: {calendar_id}")
         return self._calendar_cache[calendar_id]
@@ -57,9 +70,14 @@ class CalDAVService(CalendarOpsMixin, DeltaOpsMixin):
         self._connect()
         calendars = self.list_calendars()
         calendar_id_norm = normalize_calendar_id(calendar_id)
+        calendar_id_path = normalize_calendar_path(calendar_id)
         if calendar_id_norm:
             for info in calendars:
                 if normalize_calendar_id(info.calendar_id) == calendar_id_norm:
+                    return info
+        if calendar_id_path:
+            for info in calendars:
+                if normalize_calendar_path(info.calendar_id) == calendar_id_path:
                     return info
         calendar_name_norm = normalize_calendar_name(calendar_name)
         if calendar_name_norm:
@@ -76,8 +94,11 @@ class CalDAVService(CalendarOpsMixin, DeltaOpsMixin):
 
         refreshed = self.list_calendars()
         created_norm = normalize_calendar_id(created_id)
+        created_path = normalize_calendar_path(created_id)
         for info in refreshed:
             if normalize_calendar_id(info.calendar_id) == created_norm:
+                return info
+            if created_path and normalize_calendar_path(info.calendar_id) == created_path:
                 return info
 
         fallback_name_norm = normalize_calendar_name(calendar_name)

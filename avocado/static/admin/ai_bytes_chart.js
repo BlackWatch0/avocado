@@ -14,18 +14,18 @@
 
   const points = (records || [])
     .map((item) => {
-      if (Object.prototype.hasOwnProperty.call(item || {}, "request_bytes")) {
+      if (Object.prototype.hasOwnProperty.call(item || {}, "request_tokens")) {
         return {
           time: item.created_at || "",
-          bytes: Number(item.request_bytes || 0),
+          tokens: Number(item.request_tokens || 0),
         };
       }
       return {
         time: item?.created_at || "",
-        bytes: Number(item?.details?.request_bytes || 0),
+        tokens: Number(item?.details?.total_tokens || 0),
       };
     })
-    .filter((item) => Number.isFinite(item.bytes) && item.bytes > 0)
+    .filter((item) => Number.isFinite(item.tokens) && item.tokens > 0)
     .sort((a, b) => (a.time < b.time ? -1 : 1))
     .slice(-120);
 
@@ -51,8 +51,8 @@
     return;
   }
 
-  const maxBytes = Math.max(...points.map((p) => p.bytes));
-  const yMax = maxBytes <= 1 ? 1 : Math.ceil(maxBytes * 1.1);
+  const maxTokens = Math.max(...points.map((p) => p.tokens));
+  const yMax = maxTokens <= 1 ? 1 : Math.ceil(maxTokens * 1.1);
   const xStep = points.length === 1 ? 0 : plotW / (points.length - 1);
 
   ctx.strokeStyle = "#93c5fd";
@@ -70,7 +70,7 @@
   ctx.beginPath();
   points.forEach((p, idx) => {
     const x = padLeft + idx * xStep;
-    const y = padTop + plotH - (p.bytes / yMax) * plotH;
+    const y = padTop + plotH - (p.tokens / yMax) * plotH;
     if (idx === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
@@ -79,7 +79,7 @@
   ctx.fillStyle = "#1d4ed8";
   points.forEach((p, idx) => {
     const x = padLeft + idx * xStep;
-    const y = padTop + plotH - (p.bytes / yMax) * plotH;
+    const y = padTop + plotH - (p.tokens / yMax) * plotH;
     ctx.beginPath();
     ctx.arc(x, y, 2.4, 0, Math.PI * 2);
     ctx.fill();
@@ -88,7 +88,7 @@
   ctx.fillStyle = "#334155";
   ctx.font = "11px Segoe UI";
   ctx.fillText("0", 20, cssHeight - padBottom + 4);
-  ctx.fillText(`${yMax} ${t("chart.bytes_unit")}`, 8, padTop + 4);
+  ctx.fillText(`${yMax} ${t("chart.tokens_unit")}`, 8, padTop + 4);
   ctx.fillText(formatShortTime(points[0].time), padLeft, cssHeight - 10);
   ctx.fillText(formatShortTime(points[points.length - 1].time), cssWidth - padRight - 86, cssHeight - 10);
 };

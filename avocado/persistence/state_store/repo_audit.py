@@ -107,14 +107,20 @@ class AuditRepoMixin:
                 details = json.loads(row["details_json"] or "{}")
             except Exception:
                 details = {}
-            request_bytes = int(details.get("request_bytes", 0) or 0)
-            if request_bytes <= 0:
+            prompt_tokens = int(details.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(details.get("completion_tokens", 0) or 0)
+            total_tokens = int(details.get("total_tokens", 0) or 0)
+            if total_tokens <= 0:
+                total_tokens = max(0, prompt_tokens) + max(0, completion_tokens)
+            if total_tokens <= 0:
                 continue
             points.append(
                 {
                     "id": int(row["id"]),
                     "created_at": created_at,
-                    "request_bytes": request_bytes,
+                    "request_tokens": total_tokens,
+                    "prompt_tokens": max(0, prompt_tokens),
+                    "completion_tokens": max(0, completion_tokens),
                 }
             )
         return points

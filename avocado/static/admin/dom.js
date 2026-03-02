@@ -22,5 +22,9 @@
   auditLogsBody: document.getElementById("audit-logs-body"),
   aiChangesList: document.getElementById("ai-changes-list"),
   aiBytesChartCanvas: document.getElementById("ai-bytes-chart"),
+  timezoneSourceSelect: document.getElementById("sync-timezone-source"),
+  timezoneSelect: document.getElementById("sync-timezone"),
+  hostTimezoneCode: document.getElementById("sync-host-timezone"),
+  effectiveTimezoneCode: document.getElementById("sync-effective-timezone"),
   panelEls: [...document.querySelectorAll("[data-panel]")],
 };

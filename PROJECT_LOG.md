@@ -1,6 +1,6 @@
 ﻿# Avocado Project Log
 
-最后更新: 2026-03-02
+最后更新: 2026-03-03
 
 ## 文档说明（固定模板）
 - 记录格式模板（改动历史）: `YYYY-MM-DD | 变更主题 | 文件 | 行为变化 | 风险/回滚 | TODO`
@@ -43,7 +43,7 @@
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
   - AI: `enabled`、`base_url`、`api_key`、`model`
-  - Sync: `window_days`、`interval_seconds`、`freeze_hours`、`timezone`
+  - Sync: `window_days`、`interval_seconds`、`freeze_hours`、`timezone_source`、`timezone`
   - Calendar Rules: `stack_calendar_*`、`user_calendar_*`、`new_calendar_*`
 - 后台 API（v1）:
   - `GET /api/config`
@@ -62,6 +62,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-03-03 | 宿主机时区自动读取 + 管理后台时区来源配置 | `avocado/timezone_utils.py`, `avocado/sync/engine.py`, `avocado/sync/pipeline.py`, `avocado/web_admin/routes/config.py`, `avocado/templates/admin.html`, `avocado/static/admin/*`, `avocado/core/models/config.py`, `config.example.yaml`, `README.md`, `tests/test_timezone_utils.py`, `tests/test_web_admin.py` | 同步窗口与 AI planning payload 的 `timezone` 改为按 `sync.timezone_source` 解析：`host` 自动检测宿主机时区，`manual` 使用 `sync.timezone`；管理后台新增“时区来源（自动/手动）+ 宿主机/生效时区展示”并提供 `GET /api/system/timezone`。 | 风险低；若自动识别不符合预期，可将 `timezone_source` 切回 `manual` 并显式设置 `timezone`。 | AVO-056 |
 | 2026-03-02 | 模型层模块化拆分（`core/models`） | `avocado/core/models/*`, `avocado/config_manager.py`, `avocado/ai_client.py`, `avocado/planner.py`, `avocado/reconciler.py`, `avocado/task_block.py`, `tests/*` | 原 `avocado/models.py` 拆分为 `constants/time_utils/config/entities`，全仓切换到 `from avocado.core.models import ...`，配置与实体语义保持不变。 | 风险低；若需回滚可恢复 `avocado/models.py` 单文件并批量改回 import。 | AVO-049 |
 | 2026-03-02 | CalDAV 集成层拆分（`integrations/caldav`） | `avocado/integrations/caldav/*`, `avocado/tools/*`, `avocado/sync/*`, `avocado/web_admin/routes/*` | 原 `caldav_client.py` 拆分为 `service/codec/calendar_ops/delta_ops/helpers`，保留 token 增量、窗口索引、X-AVO 字段读写能力。 | 风险中等；若出现供应商兼容回归可回滚到旧单文件实现。 | AVO-050 |
 | 2026-03-02 | 状态库持久化拆分（`persistence/state_store`） | `avocado/persistence/state_store/*`, `avocado/sync/*`, `avocado/web_admin/*`, `tests/*` | 原 `state_store.py` 按 repo 粒度拆分为 `sync_runs/audit/snapshots/meta/mappings/tombstones/new_cleanup`，`StateStore` 通过 mixin 组装，schema 初始化逻辑保持单次执行。 | 风险中等；若迁移后出现 SQL 行为差异可回滚到旧 `state_store.py`。 | AVO-051 |
@@ -126,6 +127,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-056 | 宿主机时区自动读取与后台来源切换 | Done | 同步窗口与 AI payload 使用自动/手动时区来源；后台可查看宿主机与生效时区并切换来源 | P1 | AVO-053, AVO-054 | 2026-03-03 |
 | AVO-055 | 工具脚本迁移到 `avocado.tools` | Done | `smoke/e2e/user_case_runner` 统一使用 `python -m avocado.tools.*` 运行，README 与测试路径同步更新 | P1 | AVO-049 | 2026-03-02 |
 | AVO-054 | 管理端前端 ES Modules 模块化 | Done | 管理页改为 `type=module`，JS/CSS 拆分到 `static/admin` 多模块，原页面功能可用 | P0 | AVO-053 | 2026-03-02 |
 | AVO-053 | `web_admin` 后端路由分包重构 | Done | `web_admin` 拆分 app/context/schemas/utils/routes，API 路径保持不变，测试通过 | P0 | AVO-052 | 2026-03-02 |
@@ -194,4 +196,3 @@
 - 完成 Nextcloud/iCloud 等主流 CalDAV 服务端联调验证（AVO-008）。
 - 增加后台访问安全机制与部署建议（AVO-009）。
 - 建立 CI 自动化质量门禁（AVO-010）。
-

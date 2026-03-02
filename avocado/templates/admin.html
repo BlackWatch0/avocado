@@ -71,6 +71,12 @@
         <label><span data-i18n="field.window_days">Window Days</span><input id="sync-window-days" type="number" min="1" required></label>
         <label><span data-i18n="field.interval_seconds">Interval Seconds</span><input id="sync-interval-seconds" type="number" min="30" required></label>
         <label><span data-i18n="field.freeze_hours">Freeze Hours</span><input id="sync-freeze-hours" type="number" min="0" required></label>
+        <label><span data-i18n="field.timezone_source">Timezone Source</span>
+          <select id="sync-timezone-source" required>
+            <option value="host" data-i18n="option.timezone_source_host">Host Auto Detect</option>
+            <option value="manual" data-i18n="option.timezone_source_manual">Manual</option>
+          </select>
+        </label>
         <label><span data-i18n="field.timezone">Timezone</span>
           <select id="sync-timezone" required>
             <option value="UTC">UTC</option>
@@ -93,6 +99,13 @@
             <option value="Pacific/Auckland">Pacific/Auckland</option>
           </select>
         </label>
+        <p class="muted">
+          <span data-i18n="field.host_timezone">Host Timezone</span>:
+          <code id="sync-host-timezone">-</code>
+          |
+          <span data-i18n="field.effective_timezone">Effective Timezone</span>:
+          <code id="sync-effective-timezone">-</code>
+        </p>
         <div class="range-sync-wrap">
           <label><span data-i18n="field.custom_sync_start">Custom Sync Start</span><input id="sync-custom-start" type="datetime-local"></label>
           <label><span data-i18n="field.custom_sync_end">Custom Sync End</span><input id="sync-custom-end" type="datetime-local"></label>
@@ -211,7 +224,6 @@
     </form>
   </main>
 
-  <script type="module" src="/static/admin/index.js"></script>
+  <script type="module" src="/static/admin/index.js?v=20260303b"></script>
 </body>
 </html>
-
