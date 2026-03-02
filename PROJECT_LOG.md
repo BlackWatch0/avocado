@@ -1,6 +1,6 @@
 ﻿# Avocado Project Log
 
-最后更新: 2026-02-27
+最后更新: 2026-03-02
 
 ## 文档说明（固定模板）
 - 记录格式模板（改动历史）: `YYYY-MM-DD | 变更主题 | 文件 | 行为变化 | 风险/回滚 | TODO`
@@ -33,17 +33,18 @@
 
 ### 数据与接口约定
 - `[AI Task]` 模块放置于事件 `DESCRIPTION` 字段，采用结构化 YAML 块。
-- `[AI Task]` 至少包含字段: `locked`、`mandatory`、`editable_fields`、`user_intent`、`updated_at`。
+- `[AI Task]` 至少包含字段: `locked`、`editable_fields`、`user_intent`、`updated_at`。
 - 用户层事件 UID 使用 namespaced 格式；若遇到历史 UID 冲突，写入会跳过并记录 `skip_seed_uid_conflict` 审计事件。
-- 若存在同名托管日历（stage/user）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
+- 若存在同名托管日历（stack/user/new）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
 - 管理页面支持中英文双语；默认按浏览器语言自动选择，用户可手动切换并持久化偏好。
 - AI 改动仅作用于 `user_intent` 非空的事件；无意图事件即使 AI 返回变更也会被跳过并记录审计。
-- AI 规划请求仅把 `user_intent` 非空且未锁定事件作为 `target_events`；其余可编辑事件在规划负载中按约束事件处理（`locked=true, mandatory=true`），降低误改与 token 浪费。
+- AI 规划请求仅把 `user_intent` 非空且未锁定事件作为 `target_events`；其余事件仅作为上下文约束，避免误改与 token 浪费。
 - 定时同步（`trigger=scheduled`）在 planning payload 未变化时跳过 AI 请求，并记录 `skip_ai_same_payload` 审计，避免重复消耗 token。
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
-  - AI: `base_url`、`api_key`、`model`
-  - Sync: `window_days`、`interval_seconds`、`timezone`
+  - AI: `enabled`、`base_url`、`api_key`、`model`
+  - Sync: `window_days`、`interval_seconds`、`freeze_hours`、`timezone`
+  - Calendar Rules: `stack_calendar_*`、`user_calendar_*`、`new_calendar_*`
 - 后台 API（v1）:
   - `GET /api/config`
   - `PUT /api/config`
@@ -61,6 +62,7 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-03-02 | 三日历协作重构（`user/stack/new`）与状态层升级 | `avocado/sync_engine.py`, `avocado/state_store.py`, `avocado/caldav_client.py`, `avocado/models.py`, `avocado/web_admin.py`, `avocado/static/admin.js`, `avocado/templates/admin.html`, `avocado/smoke_test.py`, `avocado/e2e_sync_suite.py`, `avocado/user_case_runner.py`, `config.example.yaml`, `README.md`, `tests/*` | 同步引擎重写为 Step 0-9 增量架构；新增 `sync_tokens/event_mappings/suppression_tombstones/pending_new_cleanup` 持久化；`stack` 成为窗口内目标真相，`user` 增量 patch，`new` 仅入栈后清理；管理端与配置键全面迁移到 `stack/user/new`；新增 `ai.enabled` 与 `sync.freeze_hours`；移除 `immutable/per_calendar_defaults` 运行链路；全量测试通过（`53 passed`）。 | 风险中等（破坏性配置变更）；回滚需恢复旧配置键与旧 state schema 备份。 | AVO-047 |
 | 2026-02-27 | 修复“简介型意图”误改时间导致事件看似丢失 | `avocado/sync_engine.py`, `tests/test_sync_engine_helpers.py` | 新增意图语义防护：当 `user_intent` 属于“写入简介/描述”等文本型请求且不包含明确改时关键词时，自动屏蔽 AI 对 `start/end` 的变更，仅允许描述类字段更新；新增审计事件 `ai_change_time_blocked_description_intent` 便于追踪。针对 `run_id=248` 的异常定位为“被改到 2026-02-27 00:00”，并非删除。 | 风险低；若用户希望在同一意图中既改简介又改时间，需明确写出时间变更指令（如“提前30分钟”），否则时间改动会被拦截。 | AVO-046 |
 | 2026-02-27 | 三日历端到端用例集增强 + AI 目标事件过滤修复 | `avocado/user_case_runner.py`, `tests/fixtures/user_cases_zh.json`, `avocado/sync_engine.py`, `avocado/planner.py`, `avocado/task_block.py`, `tests/test_sync_engine_helpers.py`, `tests/test_sync_engine_invalid_datetime.py`, `tests/test_task_block.py` | 新增 UTF-8 中文真实用例运行器（默认 `tests/fixtures/user_cases_zh.json`），每条用例同时校验 `stage/user/intake` 三日历状态；新增 `intake -> user -> stage` 迁移验证。同步引擎改为仅对 `user_intent` 目标事件请求 AI，非目标事件在 payload 中作为锁定约束，且无目标事件时直接跳过 AI 调用；同时统一 `user_intent` 的 `null/None` 归一化为空字符串。`manual-window` 实测通过：`run_id=226`，6/6 用例通过。 | 风险低；AI 调用目标更聚焦，若需要“全量重排”可后续加显式模式开关；回滚可恢复原 `all_events` 直传策略。 | AVO-045 |
 | 2026-02-27 | 新增真实环境 E2E 测试集：读写配置 + 触发 Sync + 校验 AI 与固定日程 + 落盘日志 | `avocado/e2e_sync_suite.py`, `README.md` | 新增 `python -m avocado.e2e_sync_suite`：读取 `config.yaml`，执行配置写读回环测试；创建临时测试事件（可编辑与锁定）；触发 `manual-window` 全链路同步；校验 AI 是否执行移动指令、锁定日程是否不变、immutable 源日程是否镜像到用户层；自动清理测试事件；将完整过程写入 `data/test_logs/` 并输出 JSON 汇总 | 风险中等；脚本会在测试环境真实写入并删除日历事件，请勿在生产环境直接运行 | AVO-044 |
@@ -116,6 +118,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-047 | 三日历协作引擎重构（user/stack/new） | Done | 完成 Step 0-9 同步流程重构；管理端与配置切换到 `stack/user/new`；新增 token/mapping/tombstone/cleanup 状态表；移除 immutable/per_calendar_defaults 运行链路；测试通过 | P0 | AVO-041, AVO-045 | 2026-03-02 |
 | AVO-046 | 248 号运行“简介意图误改时间”防护修复 | Done | 当意图为描述型请求时，AI 不得改动 `start/end`；审计可见拦截事件；`run_id=248` 场景复盘确认并非删除而是误改到午夜 | P0 | AVO-045 | 2026-02-27 |
 | AVO-045 | 三日历真实用例校验与 AI 目标过滤修复 | Done | 用例集覆盖 user/intake 输入及 stage/user/intake 三日历断言；无 `user_intent` 时不发 AI；“提前30分钟”意图在真实环境稳定命中并通过 | P0 | AVO-022, AVO-040, AVO-044 | 2026-02-27 |
 | AVO-044 | 真实环境 E2E 同步测试集与日志落盘 | Done | 一条命令覆盖配置读写、固定日程保护、AI 移动指令执行、immutable 镜像校验并自动清理；全程有文件日志与 JSON 汇总 | P0 | AVO-043, AVO-042 | 2026-02-27 |
