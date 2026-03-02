@@ -1,7 +1,7 @@
-import unittest
+﻿import unittest
 from datetime import datetime, timezone
 
-from avocado.models import EventRecord
+from avocado.core.models import EventRecord
 from avocado.reconciler import apply_change
 
 
@@ -93,4 +93,5 @@ class ReconcilerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -1,4 +1,4 @@
-import os
+﻿import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -7,7 +7,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from avocado.models import SyncResult
+from avocado.core.models import SyncResult
 from avocado.web_admin import create_app
 
 
@@ -115,10 +115,10 @@ class WebAdminTests(unittest.TestCase):
 
     def test_ai_connectivity_api(self) -> None:
         with mock.patch(
-            "avocado.web_admin.OpenAICompatibleClient.test_connectivity",
+            "avocado.web_admin.routes.ai.OpenAICompatibleClient.test_connectivity",
             return_value=(True, "Connected. Model response: OK"),
         ), mock.patch(
-            "avocado.web_admin.OpenAICompatibleClient.list_models",
+            "avocado.web_admin.routes.ai.OpenAICompatibleClient.list_models",
             return_value=["gpt-4o-mini", "gpt-4.1-mini"],
         ):
             resp = self.client.post("/api/ai/test")
@@ -191,7 +191,7 @@ class WebAdminTests(unittest.TestCase):
                     _cal("normal-id", "Personal"),
                 ]
 
-        with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
+        with mock.patch("avocado.web_admin.routes.calendars.CalDAVService", _FakeService):
             resp = self.client.get("/api/calendars")
 
         self.assertEqual(resp.status_code, 200)
@@ -331,7 +331,7 @@ class WebAdminTests(unittest.TestCase):
             def upsert_event(self, _calendar_id: str, _event: object) -> object:
                 return type("Evt", (), {"to_dict": lambda self: fake_saved, "calendar_id": "user-id", "uid": "uid-undo", "summary": "Before"})()
 
-        with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
+        with mock.patch("avocado.web_admin.routes.ai.CalDAVService", _FakeService):
             resp = self.client.post("/api/ai/changes/undo", json={"audit_id": latest["id"]})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["message"], "undo applied")
@@ -364,7 +364,7 @@ class WebAdminTests(unittest.TestCase):
             def upsert_event(self, _calendar_id: str, event: object) -> object:
                 return event
 
-        with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
+        with mock.patch("avocado.web_admin.routes.ai.CalDAVService", _FakeService):
             with mock.patch.object(self.client.app.state.context.scheduler, "trigger_manual") as trigger_manual:
                 resp = self.client.post(
                     "/api/ai/changes/revise",
@@ -396,3 +396,4 @@ class WebAdminTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

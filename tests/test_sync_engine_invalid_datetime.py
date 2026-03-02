@@ -1,13 +1,13 @@
-import tempfile
+﻿import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from avocado.config_manager import ConfigManager
-from avocado.models import CalendarInfo, EventRecord
-from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine
+from avocado.core.models import CalendarInfo, EventRecord
+from avocado.persistence.state_store import StateStore
+from avocado.sync import SyncEngine
 
 
 class _FakeCalDAVService:
@@ -198,8 +198,8 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             engine = SyncEngine(manager, store)
 
             with (
-                mock.patch("avocado.sync_engine.CalDAVService", _FakeCalDAVService),
-                mock.patch("avocado.sync_engine.OpenAICompatibleClient", _FakeAIClient),
+                mock.patch("avocado.sync.pipeline.CalDAVService", _FakeCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _FakeAIClient),
             ):
                 result = engine.run_once(trigger="manual")
 
@@ -264,8 +264,8 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             _CountingAIClient.calls = 0
 
             with (
-                mock.patch("avocado.sync_engine.CalDAVService", _NoIntentCalDAVService),
-                mock.patch("avocado.sync_engine.OpenAICompatibleClient", _CountingAIClient),
+                mock.patch("avocado.sync.pipeline.CalDAVService", _NoIntentCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _CountingAIClient),
             ):
                 result = engine.run_once(trigger="manual")
 
@@ -277,3 +277,6 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

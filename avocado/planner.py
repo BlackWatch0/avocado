@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
 
-from avocado.models import DEFAULT_AI_SYSTEM_PROMPT, EventRecord
+from avocado.core.models import DEFAULT_AI_SYSTEM_PROMPT, EventRecord
 
 
 def build_planning_payload(
@@ -53,4 +53,5 @@ def normalize_changes(raw_changes: list[dict[str, Any]]) -> list[dict[str, Any]]
                 cleaned[field] = item[field]
         normalized.append(cleaned)
     return normalized
+
 

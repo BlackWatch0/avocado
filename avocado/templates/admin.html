@@ -4,7 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Avocado Admin</title>
-  <link rel="stylesheet" href="/static/admin.css">
+  <link rel="stylesheet" href="/static/admin/styles/base.css">
+  <link rel="stylesheet" href="/static/admin/styles/layout.css">
+  <link rel="stylesheet" href="/static/admin/styles/components.css">
+  <link rel="stylesheet" href="/static/admin/styles/logs.css">
 </head>
 <body>
   <main class="page">
@@ -122,6 +125,7 @@
               <tr>
                 <th data-i18n="table.name">Name</th>
                 <th data-i18n="table.role">Role</th>
+                <th data-i18n="table.locked_source">Locked Source</th>
               </tr>
             </thead>
             <tbody id="calendar-behaviors-body"></tbody>
@@ -207,7 +211,7 @@
     </form>
   </main>
 
-  <script src="/static/admin.js"></script>
+  <script type="module" src="/static/admin/index.js"></script>
 </body>
 </html>
 

@@ -1,6 +1,6 @@
-import unittest
+﻿import unittest
 
-from avocado.models import TaskDefaultsConfig
+from avocado.core.models import TaskDefaultsConfig
 from avocado.task_block import (
     AI_TASK_END,
     AI_TASK_START,
@@ -57,4 +57,5 @@ class TaskBlockTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

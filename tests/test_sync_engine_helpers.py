@@ -1,8 +1,8 @@
-import unittest
+﻿import unittest
 from datetime import datetime, timezone
 
-from avocado.models import EventRecord
-from avocado.sync_engine import (
+from avocado.core.models import EventRecord
+from avocado.sync import (
     _collapse_nested_managed_uid,
     _event_has_user_intent,
     _extract_user_intent,
@@ -103,14 +103,14 @@ class SyncEngineHelperTests(unittest.TestCase):
         self.assertEqual(_extract_user_intent(event_with_null_intent), "")
 
     def test_intent_time_change_detection(self) -> None:
-        self.assertTrue(_intent_requests_time_change("提前30分钟"))
+        self.assertTrue(_intent_requests_time_change("Move this 30 minutes earlier"))
         self.assertTrue(_intent_requests_time_change("move earlier by 30 minutes"))
-        self.assertTrue(_intent_requests_time_change("改到15:30"))
-        self.assertFalse(_intent_requests_time_change("帮我补充到简介里"))
+        self.assertTrue(_intent_requests_time_change("Reschedule to 15:30"))
+        self.assertFalse(_intent_requests_time_change("Please improve the description only"))
 
     def test_intent_prefers_description_only(self) -> None:
-        self.assertTrue(_intent_prefers_description_only("帮我安排一套60分钟方案放在简介"))
-        self.assertFalse(_intent_prefers_description_only("提前30分钟，放在简介"))
+        self.assertTrue(_intent_prefers_description_only("Please only update the description notes"))
+        self.assertFalse(_intent_prefers_description_only("Move this 30 minutes earlier and update description"))
 
 
 class _FakeCalDAVService:
@@ -177,3 +177,5 @@ class SyncEngineDuplicateCalendarCleanupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

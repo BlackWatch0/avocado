@@ -1,6 +1,6 @@
-import unittest
+﻿import unittest
 
-from avocado.models import AIConfig, CalendarRulesConfig
+from avocado.core.models import AIConfig, CalendarRulesConfig
 
 
 class ModelsTests(unittest.TestCase):
@@ -30,4 +30,5 @@ class ModelsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

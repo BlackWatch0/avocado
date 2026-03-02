@@ -1,13 +1,13 @@
-import tempfile
+﻿import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from avocado.config_manager import ConfigManager
-from avocado.models import CalendarInfo, EventRecord
-from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine
+from avocado.core.models import CalendarInfo, EventRecord
+from avocado.persistence.state_store import StateStore
+from avocado.sync import SyncEngine
 
 
 class _FakeCalDAVService:
@@ -135,7 +135,7 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
         fake_service = _FakeCalDAVService(object())
         source_uid = "source-uid"
 
-        with mock.patch("avocado.sync_engine.CalDAVService", return_value=fake_service):
+        with mock.patch("avocado.sync.pipeline.CalDAVService", return_value=fake_service):
             result = self.engine.run_once(trigger="manual")
 
         self.assertEqual(result.status, "success")
@@ -157,3 +157,6 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

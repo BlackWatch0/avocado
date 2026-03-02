@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 from typing import Optional
 
 from avocado.config_manager import ConfigManager
-from avocado.sync_engine import SyncEngine
+from avocado.sync import SyncEngine
 
 
 class SyncScheduler:
@@ -46,4 +46,5 @@ class SyncScheduler:
                 self.sync_engine.run_once(trigger="manual")
             else:
                 self.sync_engine.run_once(trigger="scheduled")
+
 

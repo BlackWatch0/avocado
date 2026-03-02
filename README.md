@@ -146,21 +146,21 @@ Admin page behavior:
 ### Integration Smoke Test (use your configured `config.yaml`)
 
 - Basic checks (CalDAV + AI + config):
-  - `python -m avocado.smoke_test`
+  - `python -m avocado.tools.smoke_test`
 - Include one real sync run (manual-window):
-  - `python -m avocado.smoke_test --run-sync`
+  - `python -m avocado.tools.smoke_test --run-sync`
 - Custom window:
-  - `python -m avocado.smoke_test --run-sync --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T00:00:00+00:00`
+  - `python -m avocado.tools.smoke_test --run-sync --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T00:00:00+00:00`
 - Skip one side during troubleshooting:
-  - `python -m avocado.smoke_test --skip-ai`
-  - `python -m avocado.smoke_test --skip-caldav`
+  - `python -m avocado.tools.smoke_test --skip-ai`
+  - `python -m avocado.tools.smoke_test --skip-caldav`
 
 ### Real E2E Sync Suite (writes test events, triggers sync, keeps logs)
 
 - Run full suite (config read/write, fixed-schedule protection, AI move instruction):
-  - `python -m avocado.e2e_sync_suite`
+  - `python -m avocado.tools.e2e_sync_suite`
 - Optional custom window:
-  - `python -m avocado.e2e_sync_suite --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T23:59:59+00:00`
+  - `python -m avocado.tools.e2e_sync_suite --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T23:59:59+00:00`
 - Test logs:
   - saved under `data/test_logs/e2e_sync_suite_<timestamp>.log`
   - script also prints JSON summary to stdout
@@ -168,11 +168,12 @@ Admin page behavior:
 ### User Case Runner (UTF-8 Chinese cases, validates stack/user/new)
 
 - Run with default fixture:
-  - `python -m avocado.user_case_runner`
+  - `python -m avocado.tools.user_case_runner`
 - Run with a custom case file:
-  - `python -m avocado.user_case_runner --cases tests/fixtures/user_cases_zh.json`
+  - `python -m avocado.tools.user_case_runner --cases tests/fixtures/user_cases_zh.json`
 - What it validates for each case:
   - behavior expectation (move earlier / locked unchanged / description-only / new import)
   - calendar assertions: event exists in `user` + `stack`, raw uid removed from `new`
 - Logs:
   - saved under `data/test_logs/user_cases_<timestamp>.json`
+

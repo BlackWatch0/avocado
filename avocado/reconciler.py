@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from avocado.models import EventRecord, parse_iso_datetime
+from avocado.core.models import EventRecord, parse_iso_datetime
 
 
 ALLOWED_FIELDS = {"start", "end", "summary", "location", "description"}
@@ -89,3 +89,4 @@ def apply_change(
         event=updated,
         blocked_fields=blocked_fields,
     )
+

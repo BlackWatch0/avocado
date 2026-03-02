@@ -45,6 +45,7 @@ calendar_rules:
   user_calendar_name: "Avocado User Calendar"
   new_calendar_id: ""
   new_calendar_name: "Avocado New Calendar"
+  locked_calendar_ids: []
 
 task_defaults:
   locked: false

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import logging
@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from avocado.models import DEFAULT_EDITABLE_FIELDS, TaskDefaultsConfig
+from avocado.core.models import DEFAULT_EDITABLE_FIELDS, TaskDefaultsConfig
 
 AI_TASK_START = "[AI Task]"
 AI_TASK_END = "[/AI Task]"
@@ -136,3 +136,4 @@ def set_ai_task_user_intent(
     task_payload["updated_at"] = _now_iso()
     final_description = upsert_ai_task_block(updated_description, task_payload)
     return final_description, task_payload, True
+

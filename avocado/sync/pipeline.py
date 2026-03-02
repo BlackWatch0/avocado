@@ -1,514 +1,25 @@
 ﻿from __future__ import annotations
 
-import hashlib
 import json
-import re
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from avocado.ai_client import OpenAICompatibleClient
-from avocado.caldav_client import CalDAVService
-from avocado.config_manager import ConfigManager
-from avocado.models import EventRecord, SyncResult, serialize_datetime
+from avocado.core.models import EventRecord, SyncResult, serialize_datetime
+from avocado.integrations.caldav import CalDAVService
 from avocado.planner import build_messages, build_planning_payload, normalize_changes
 from avocado.reconciler import apply_change
-from avocado.state_store import StateStore
-from avocado.task_block import parse_ai_task_block
+from avocado.sync.helpers_identity import _event_fingerprint, _hash_text
+from avocado.sync.helpers_intent import (
+    _event_has_user_intent,
+    _event_locked_for_ai,
+    _extract_editable_fields,
+    _extract_user_intent,
+)
 
 
-def _hash_text(value: str) -> str:
-    return hashlib.sha1(value.encode("utf-8")).hexdigest()  # nosec B324
-
-
-def _staging_uid(calendar_id: str, uid: str) -> str:
-    """Legacy helper kept for compatibility with existing scripts/tests."""
-    prefix = hashlib.sha1(calendar_id.encode("utf-8")).hexdigest()[:10]  # nosec B324
-    return f"{prefix}:{uid}"
-
-
-def _normalize_calendar_name(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
-
-
-def _managed_uid_prefix_depth(uid: str) -> int:
-    if not uid:
-        return 0
-    parts = uid.split(":")
-    depth = 0
-    for segment in parts[:-1]:
-        if re.fullmatch(r"[0-9a-f]{10}", segment):
-            depth += 1
-        else:
-            break
-    return depth
-
-
-def _collapse_nested_managed_uid(uid: str) -> str:
-    depth = _managed_uid_prefix_depth(uid)
-    if depth <= 1:
-        return uid
-    parts = uid.split(":")
-    return ":".join(parts[depth - 1 :])
-
-
-def _is_confirmed_avocado_calendar(calendar_id: str, known_managed_calendar_ids: set[str]) -> bool:
-    return bool(calendar_id and calendar_id in known_managed_calendar_ids)
-
-
-def _purge_duplicate_calendar_events(
-    *,
-    caldav_service: CalDAVService,
-    state_store: StateStore,
-    duplicate_calendars: list[tuple[str, str]],
-    calendar_role: str,
-    known_managed_calendar_ids: set[str],
-    trigger: str,
-    window_start: datetime,
-    window_end: datetime,
-) -> bool:
-    should_replan = False
-    for duplicate_id, duplicate_name in duplicate_calendars:
-        if not _is_confirmed_avocado_calendar(duplicate_id, known_managed_calendar_ids):
-            state_store.record_audit_event(
-                calendar_id=duplicate_id,
-                uid="calendar",
-                action=f"warn_unverified_duplicate_{calendar_role}_calendar",
-                details={
-                    "trigger": trigger,
-                    "duplicate_calendar_name": duplicate_name,
-                    "reason": "calendar_ownership_unverified",
-                },
-            )
-            continue
-
-        duplicate_events = caldav_service.fetch_events(duplicate_id, window_start, window_end)
-        for duplicate_event in duplicate_events:
-            if not duplicate_event.uid:
-                continue
-            delete_ok = caldav_service.delete_event(
-                duplicate_id,
-                uid=duplicate_event.uid,
-                href=duplicate_event.href,
-            )
-            state_store.record_audit_event(
-                calendar_id=duplicate_id,
-                uid=duplicate_event.uid,
-                action=f"purge_duplicate_{calendar_role}_calendar_event",
-                details={
-                    "trigger": trigger,
-                    "delete_ok": delete_ok,
-                    "duplicate_calendar_name": duplicate_name,
-                },
-            )
-            should_replan = True
-    return should_replan
-
-
-def _event_fingerprint(event: EventRecord) -> str:
-    return _hash_text(
-        f"{event.summary}|{event.description}|{event.location}|"
-        f"{serialize_datetime(event.start)}|{serialize_datetime(event.end)}|"
-        f"{int(bool(event.locked))}|{event.x_sync_id}|{event.x_source}|{event.x_source_uid}"
-    )
-
-
-def _normalize_intent_value(value: Any) -> str:
-    text = str(value or "").strip()
-    if text.casefold() in {"", "\"\"", "''", "null", "none", "~"}:
-        return ""
-    return text
-
-
-def _event_has_user_intent(event: EventRecord) -> bool:
-    parsed = parse_ai_task_block(event.description or "")
-    if isinstance(parsed, dict):
-        return bool(_normalize_intent_value(parsed.get("user_intent", "")))
-    description = event.description or ""
-    block_match = re.search(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", description, re.DOTALL)
-    if not block_match:
-        return False
-    raw_block = block_match.group(1)
-    intent_match = re.search(r"^\s*user_intent\s*:\s*(.+)\s*$", raw_block, re.MULTILINE)
-    if not intent_match:
-        return False
-    return bool(_normalize_intent_value(intent_match.group(1)))
-
-
-def _extract_user_intent(event: EventRecord) -> str:
-    parsed = parse_ai_task_block(event.description or "")
-    if isinstance(parsed, dict):
-        return _normalize_intent_value(parsed.get("user_intent", ""))
-    description = event.description or ""
-    block_match = re.search(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", description, re.DOTALL)
-    if not block_match:
-        return ""
-    raw_block = block_match.group(1)
-    intent_match = re.search(r"^\s*user_intent\s*:\s*(.+)\s*$", raw_block, re.MULTILINE)
-    if not intent_match:
-        return ""
-    return _normalize_intent_value(intent_match.group(1))
-
-
-def _extract_editable_fields(event: EventRecord, fallback_fields: list[str]) -> list[str]:
-    parsed = parse_ai_task_block(event.description or "")
-    if isinstance(parsed, dict):
-        editable_fields = parsed.get("editable_fields")
-        if isinstance(editable_fields, list):
-            cleaned = [str(field).strip() for field in editable_fields if str(field).strip()]
-            if cleaned:
-                return cleaned
-    return [str(field).strip() for field in fallback_fields if str(field).strip()]
-
-
-def _intent_requests_time_change(intent: str) -> bool:
-    text = str(intent or "").strip()
-    if not text:
-        return False
-    lowered = text.casefold()
-    keyword_hits = [
-        "before",
-        "after",
-        "earlier",
-        "later",
-        "move",
-        "shift",
-        "reschedule",
-        "around",
-        " at ",
-        "time",
-        "提前",
-        "延后",
-        "推迟",
-        "改到",
-        "时间",
-    ]
-    if any(token in lowered for token in keyword_hits):
-        return True
-    if re.search(r"\b\d{1,2}:\d{2}\b", text):
-        return True
-    if re.search(r"\b\d{1,2}\s*(am|pm)\b", lowered):
-        return True
-    return False
-
-
-def _intent_prefers_description_only(intent: str) -> bool:
-    text = str(intent or "").strip()
-    if not text:
-        return False
-    lowered = text.casefold()
-    description_keywords = ["description", "note", "notes", "summary", "简介", "描述", "备注", "说明"]
-    return any(token in lowered for token in description_keywords) and not _intent_requests_time_change(text)
-
-class SyncEngine:
-    ENGINE_SCHEMA_VERSION = "2"
-    ROLLOUT_MODE = "stack_v2"
-
-    def __init__(self, config_manager: ConfigManager, state_store: StateStore) -> None:
-        self.config_manager = config_manager
-        self.state_store = state_store
-
-    @staticmethod
-    def _source_key(source: str, calendar_id: str) -> str:
-        return f"{source}:{calendar_id}"
-
-    @staticmethod
-    def _stack_uid(sync_id: str) -> str:
-        return f"avo-{sync_id}"
-
-    @staticmethod
-    def _window_bounds(
-        *,
-        window_days: int,
-        start_override: datetime | None,
-        end_override: datetime | None,
-    ) -> tuple[datetime, datetime]:
-        if (start_override is None) ^ (end_override is None):
-            raise ValueError("window_start_override and window_end_override must both be provided")
-        if start_override is not None and end_override is not None:
-            start_utc = start_override.astimezone(timezone.utc)
-            end_utc = end_override.astimezone(timezone.utc)
-            if end_utc <= start_utc:
-                raise ValueError("window_end_override must be later than window_start_override")
-            return start_utc, end_utc
-
-        london_tz = ZoneInfo("Europe/London")
-        now_local = datetime.now(london_tz)
-        start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_local = start_local + timedelta(days=max(1, int(window_days)))
-        return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
-
-    @staticmethod
-    def _query_window_end(window_start: datetime, window_end: datetime) -> datetime:
-        if window_end <= window_start:
-            return window_start
-        return window_end - timedelta(microseconds=1)
-
-    @staticmethod
-    def _in_window(event: EventRecord, window_start: datetime, window_end: datetime) -> bool:
-        if event.start is None:
-            return False
-        start_utc = event.start.astimezone(timezone.utc)
-        return window_start <= start_utc < window_end
-
-    @staticmethod
-    def _index_mapping(
-        row: dict[str, Any],
-        *,
-        by_sync: dict[str, dict[str, Any]],
-        by_source: dict[tuple[str, str, str], dict[str, Any]],
-        by_user_uid: dict[str, dict[str, Any]],
-        by_stack_uid: dict[str, dict[str, Any]],
-    ) -> None:
-        by_sync[str(row["sync_id"])] = row
-        by_source[
-            (
-                str(row["source"]),
-                str(row["source_calendar_id"]),
-                str(row["source_uid"]),
-            )
-        ] = row
-        if str(row.get("user_uid", "")).strip():
-            by_user_uid[str(row["user_uid"])] = row
-        if str(row.get("stack_uid", "")).strip():
-            by_stack_uid[str(row["stack_uid"])] = row
-
-    def _load_mapping_indexes(
-        self,
-    ) -> tuple[
-        dict[str, dict[str, Any]],
-        dict[tuple[str, str, str], dict[str, Any]],
-        dict[str, dict[str, Any]],
-        dict[str, dict[str, Any]],
-    ]:
-        by_sync: dict[str, dict[str, Any]] = {}
-        by_source: dict[tuple[str, str, str], dict[str, Any]] = {}
-        by_user_uid: dict[str, dict[str, Any]] = {}
-        by_stack_uid: dict[str, dict[str, Any]] = {}
-        for row in self.state_store.list_event_mappings():
-            self._index_mapping(
-                row,
-                by_sync=by_sync,
-                by_source=by_source,
-                by_user_uid=by_user_uid,
-                by_stack_uid=by_stack_uid,
-            )
-        return by_sync, by_source, by_user_uid, by_stack_uid
-
-    def _ensure_mapping(
-        self,
-        *,
-        source: str,
-        source_calendar_id: str,
-        source_uid: str,
-        preferred_user_uid: str,
-        preferred_stack_uid: str,
-        by_sync: dict[str, dict[str, Any]],
-        by_source: dict[tuple[str, str, str], dict[str, Any]],
-        by_user_uid: dict[str, dict[str, Any]],
-        by_stack_uid: dict[str, dict[str, Any]],
-    ) -> dict[str, Any]:
-        source_key = (str(source), str(source_calendar_id), str(source_uid))
-        existing = by_source.get(source_key)
-        if existing is not None:
-            row = {
-                "sync_id": str(existing["sync_id"]),
-                "source": str(source),
-                "source_calendar_id": str(source_calendar_id),
-                "source_uid": str(source_uid),
-                "source_href_hash": str(existing.get("source_href_hash", "")),
-                "user_uid": str(existing.get("user_uid") or preferred_user_uid or self._stack_uid(str(existing["sync_id"]))),
-                "stack_uid": str(existing.get("stack_uid") or preferred_stack_uid or self._stack_uid(str(existing["sync_id"]))),
-                "status": str(existing.get("status", "active")),
-            }
-            self.state_store.upsert_event_mapping(**row)
-            self._index_mapping(
-                row,
-                by_sync=by_sync,
-                by_source=by_source,
-                by_user_uid=by_user_uid,
-                by_stack_uid=by_stack_uid,
-            )
-            return row
-
-        sync_id = str(uuid4())
-        row = {
-            "sync_id": sync_id,
-            "source": str(source),
-            "source_calendar_id": str(source_calendar_id),
-            "source_uid": str(source_uid),
-            "source_href_hash": _hash_text(str(source_uid)),
-            "user_uid": str(preferred_user_uid or self._stack_uid(sync_id)),
-            "stack_uid": str(preferred_stack_uid or self._stack_uid(sync_id)),
-            "status": "active",
-        }
-        self.state_store.upsert_event_mapping(**row)
-        self._index_mapping(
-            row,
-            by_sync=by_sync,
-            by_source=by_source,
-            by_user_uid=by_user_uid,
-            by_stack_uid=by_stack_uid,
-        )
-        return row
-
-    @staticmethod
-    def _source_label(mapping: dict[str, Any]) -> str:
-        source = str(mapping.get("source", ""))
-        if source == "ext":
-            return f"ext:{mapping.get('source_calendar_id', '')}"
-        return source or "user"
-
-    def _stack_event_from_source(
-        self,
-        *,
-        source_event: EventRecord,
-        mapping: dict[str, Any],
-        stack_calendar_id: str,
-    ) -> EventRecord:
-        return source_event.clone().with_updates(
-            calendar_id=stack_calendar_id,
-            uid=str(mapping["stack_uid"]),
-            href="",
-            source="stack",
-            x_sync_id=str(mapping["sync_id"]),
-            x_source=self._source_label(mapping),
-            x_source_uid=str(mapping["source_uid"]),
-            original_calendar_id=str(mapping["source_calendar_id"]),
-            original_uid=str(mapping["source_uid"]),
-        )
-
-    @staticmethod
-    def _merge_user_event_into_stack(target: EventRecord, user_event: EventRecord) -> EventRecord:
-        merged = target.clone()
-        merged.summary = user_event.summary
-        merged.description = user_event.description
-        merged.location = user_event.location
-        merged.start = user_event.start
-        merged.end = user_event.end
-        merged.locked = bool(user_event.locked)
-        return merged
-
-    @staticmethod
-    def _events_equal(current: EventRecord, desired: EventRecord) -> bool:
-        return _event_fingerprint(current) == _event_fingerprint(desired)
-
-    def _apply_upsert_with_retry(
-        self,
-        *,
-        caldav_service: CalDAVService,
-        calendar_id: str,
-        desired_event: EventRecord,
-        current_event: EventRecord | None,
-    ) -> tuple[bool, EventRecord | None]:
-        expected_etag = current_event.etag if current_event is not None else ""
-        try:
-            saved = caldav_service.upsert_event(
-                calendar_id,
-                desired_event,
-                expected_etag=expected_etag,
-            )
-            return True, saved
-        except RuntimeError as exc:
-            if "etag_conflict" not in str(exc):
-                return False, None
-
-        latest = caldav_service.get_event_by_uid(calendar_id, desired_event.uid)
-        if latest is None:
-            try:
-                saved = caldav_service.upsert_event(calendar_id, desired_event)
-                return True, saved
-            except Exception:
-                return False, None
-        retry_event = latest.with_updates(
-            summary=desired_event.summary,
-            description=desired_event.description,
-            location=desired_event.location,
-            start=desired_event.start,
-            end=desired_event.end,
-            locked=desired_event.locked,
-            x_sync_id=desired_event.x_sync_id,
-            x_source=desired_event.x_source,
-            x_source_uid=desired_event.x_source_uid,
-            original_calendar_id=desired_event.original_calendar_id,
-            original_uid=desired_event.original_uid,
-        )
-        try:
-            saved = caldav_service.upsert_event(
-                calendar_id,
-                retry_event,
-                expected_etag=latest.etag,
-            )
-            return True, saved
-        except Exception:
-            return False, None
-
-    def _apply_delete_with_retry(
-        self,
-        *,
-        caldav_service: CalDAVService,
-        calendar_id: str,
-        uid: str,
-        href: str,
-        expected_etag: str,
-    ) -> bool:
-        try:
-            return bool(
-                caldav_service.delete_event_with_etag(
-                    calendar_id,
-                    uid=uid,
-                    expected_etag=expected_etag,
-                    href=href,
-                )
-            )
-        except RuntimeError as exc:
-            if "etag_conflict" not in str(exc):
-                return False
-        latest = caldav_service.get_event_by_uid(calendar_id, uid)
-        if latest is None:
-            return True
-        try:
-            return bool(
-                caldav_service.delete_event_with_etag(
-                    calendar_id,
-                    uid=uid,
-                    expected_etag=latest.etag,
-                    href=latest.href,
-                )
-            )
-        except Exception:
-            return False
-
-    def _clear_stack_for_migration(
-        self,
-        *,
-        caldav_service: CalDAVService,
-        stack_calendar_id: str,
-        trigger: str,
-        run_id: int,
-    ) -> None:
-        now = datetime.now(timezone.utc)
-        events = caldav_service.fetch_events(
-            stack_calendar_id,
-            now - timedelta(days=3650),
-            now + timedelta(days=3650),
-        )
-        deleted_events = 0
-        for event in events:
-            if not event.uid:
-                continue
-            if caldav_service.delete_event(stack_calendar_id, uid=event.uid, href=event.href):
-                deleted_events += 1
-        self.state_store.record_audit_event(
-            calendar_id=stack_calendar_id,
-            uid="calendar",
-            action="stack_calendar_rebuilt",
-            details={"trigger": trigger, "deleted_events": deleted_events},
-            run_id=run_id,
-        )
-
+class PipelineMixin:
     def run_once(
         self,
         trigger: str = "manual",
@@ -682,6 +193,7 @@ class SyncEngine:
 
             stack_state: dict[str, EventRecord] = {}
             deleted_sync_ids: set[str] = set()
+            locked_source_calendar_ids = set(config.calendar_rules.locked_calendar_ids or [])
 
             for calendar in external_calendars:
                 for event in sorted(ext_window_events.get(calendar.calendar_id, []), key=lambda item: (item.uid or "", item.href or "")):
@@ -700,11 +212,14 @@ class SyncEngine:
                         by_user_uid=mapping_by_user_uid,
                         by_stack_uid=mapping_by_stack_uid,
                     )
-                    stack_state[str(mapping["sync_id"])] = self._stack_event_from_source(
+                    stack_event = self._stack_event_from_source(
                         source_event=event,
                         mapping=mapping,
                         stack_calendar_id=stack_info.calendar_id,
                     )
+                    if calendar.calendar_id in locked_source_calendar_ids:
+                        stack_event.locked = True
+                    stack_state[str(mapping["sync_id"])] = stack_event
 
             for user_event in sorted(user_window_events, key=lambda item: (item.uid or "", item.href or "")):
                 if not user_event.uid:
@@ -856,7 +371,7 @@ class SyncEngine:
                         "location": event.location,
                         "start": serialize_datetime(event.start),
                         "end": serialize_datetime(event.end),
-                        "locked": bool(event.locked),
+                        "locked": bool(_event_locked_for_ai(event)),
                     }
                 )
                 frozen = (
@@ -864,7 +379,7 @@ class SyncEngine:
                     and event.start is not None
                     and event.start.astimezone(timezone.utc) <= freeze_cutoff
                 )
-                if not event.locked and not frozen and _event_has_user_intent(event):
+                if not _event_locked_for_ai(event) and not frozen and _event_has_user_intent(event):
                     target_events_payload.append(
                         {
                             "calendar_id": event.calendar_id,
@@ -920,7 +435,7 @@ class SyncEngine:
                 current_event = stack_state.get(sync_id)
                 if current_event is None:
                     continue
-                if current_event.locked:
+                if _event_locked_for_ai(current_event):
                     _audit(
                         calendar_id=current_event.calendar_id,
                         uid=current_event.uid,
@@ -1222,3 +737,7 @@ class SyncEngine:
                 conflicts=conflicts,
                 trigger=trigger,
             )
+
+
+
+

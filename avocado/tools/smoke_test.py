@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -6,11 +6,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from avocado.ai_client import OpenAICompatibleClient
-from avocado.caldav_client import CalDAVService
+from avocado.integrations.caldav import CalDAVService
 from avocado.config_manager import ConfigManager
-from avocado.models import parse_iso_datetime, serialize_datetime
-from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine
+from avocado.core.models import parse_iso_datetime, serialize_datetime
+from avocado.persistence.state_store import StateStore
+from avocado.sync import SyncEngine
 
 
 def _line(title: str, payload: Any = "") -> None:
@@ -203,3 +203,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+

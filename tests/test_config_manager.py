@@ -1,4 +1,4 @@
-import errno
+﻿import errno
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +7,7 @@ from unittest import mock
 import yaml
 
 from avocado.config_manager import ConfigManager
-from avocado.models import AppConfig
+from avocado.core.models import AppConfig
 
 
 class ConfigManagerTests(unittest.TestCase):
@@ -40,4 +40,5 @@ class ConfigManagerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
