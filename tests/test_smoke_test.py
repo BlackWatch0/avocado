@@ -1,10 +1,10 @@
-import argparse
+﻿import argparse
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
-from avocado.models import AppConfig
-from avocado.smoke_test import _window_from_args, main
+from avocado.core.models import AppConfig
+from avocado.tools.smoke_test import _window_from_args, main
 
 
 class SmokeTestTests(unittest.TestCase):
@@ -42,8 +42,8 @@ class SmokeTestTests(unittest.TestCase):
             end="",
         )
         cfg = AppConfig.from_dict({})
-        with mock.patch("avocado.smoke_test._parse_args", return_value=args), mock.patch(
-            "avocado.smoke_test.ConfigManager"
+        with mock.patch("avocado.tools.smoke_test._parse_args", return_value=args), mock.patch(
+            "avocado.tools.smoke_test.ConfigManager"
         ) as manager_cls:
             manager_cls.return_value.load.return_value = cfg
             rc = main()
@@ -68,9 +68,9 @@ class SmokeTestTests(unittest.TestCase):
                 }
             }
         )
-        with mock.patch("avocado.smoke_test._parse_args", return_value=args), mock.patch(
-            "avocado.smoke_test.ConfigManager"
-        ) as manager_cls, mock.patch("avocado.smoke_test.OpenAICompatibleClient") as ai_cls:
+        with mock.patch("avocado.tools.smoke_test._parse_args", return_value=args), mock.patch(
+            "avocado.tools.smoke_test.ConfigManager"
+        ) as manager_cls, mock.patch("avocado.tools.smoke_test.OpenAICompatibleClient") as ai_cls:
             manager_cls.return_value.load.return_value = cfg
             ai_cls.return_value.test_connectivity.return_value = (False, "bad key")
             rc = main()
@@ -79,3 +79,5 @@ class SmokeTestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

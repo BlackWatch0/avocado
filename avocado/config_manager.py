@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import errno
@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from avocado.models import AppConfig, default_app_config
+from avocado.core.models import AppConfig, default_app_config
 
 
 def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -85,3 +85,4 @@ class ConfigManager:
         if config.get("ai", {}).get("api_key"):
             config["ai"]["api_key"] = "***"
         return config
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -8,11 +8,11 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from avocado.caldav_client import CalDAVService
+from avocado.integrations.caldav import CalDAVService
 from avocado.config_manager import ConfigManager
-from avocado.models import EventRecord, serialize_datetime
-from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine
+from avocado.core.models import EventRecord, serialize_datetime
+from avocado.persistence.state_store import StateStore
+from avocado.sync import SyncEngine
 
 
 def _parse_args() -> argparse.Namespace:
@@ -339,3 +339,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+

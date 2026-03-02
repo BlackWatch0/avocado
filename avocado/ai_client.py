@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -6,7 +6,7 @@ from typing import Any
 
 import requests
 
-from avocado.models import AIConfig
+from avocado.core.models import AIConfig
 
 
 JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
@@ -131,4 +131,5 @@ class OpenAICompatibleClient:
             return deduped
         except Exception:
             return []
+
 

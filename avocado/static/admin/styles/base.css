@@ -1,0 +1,74 @@
+﻿* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: radial-gradient(circle at top right, #dbeafe 0%, #f8fafc 38%, #eef2ff 100%);
+  color: #0f172a;
+}
+
+button {
+  border: 0;
+  background: #0f172a;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+label {
+  display: block;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+select,
+textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.status {
+  margin: 14px 0 18px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.status.info {
+  background: #dbeafe;
+}
+
+.status.success {
+  background: #dcfce7;
+}
+
+.status.error {
+  background: #fee2e2;
+}
+
+.muted {
+  margin: 0 0 8px;
+  color: #475569;
+  font-size: 13px;
+}
+
+code {
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
