@@ -15,7 +15,6 @@ class TaskBlockTests(unittest.TestCase):
     def setUp(self) -> None:
         self.defaults = TaskDefaultsConfig(
             locked=False,
-            mandatory=False,
             editable_fields=["start", "end", "summary", "location", "description"],
         )
 
@@ -29,12 +28,11 @@ class TaskBlockTests(unittest.TestCase):
         self.assertNotIn("mandatory", payload)
 
     def test_parse_and_strip(self) -> None:
-        description = "Hello\n\n[AI Task]\nlocked: true\nmandatory: false\n[/AI Task]"
+        description = "Hello\n\n[AI Task]\nlocked: true\n[/AI Task]"
         parsed = parse_ai_task_block(description)
         self.assertIsNotNone(parsed)
         assert parsed is not None
         self.assertTrue(parsed["locked"])
-        self.assertFalse(parsed["mandatory"])
         self.assertEqual(strip_ai_task_block(description), "Hello")
 
 

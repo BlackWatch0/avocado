@@ -185,7 +185,6 @@ def main() -> int:
             end=end_utc,
             source=source_calendar,
             locked=bool(case.get("locked", False)),
-            mandatory=bool(case.get("mandatory", False)),
         )
         service.upsert_event(target_calendar_id, event)
         created_events.append(

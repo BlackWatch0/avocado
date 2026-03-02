@@ -33,7 +33,7 @@ class WebAdminTests(unittest.TestCase):
                 "intake_calendar_id": "intake-id",
                 "intake_calendar_name": "intake",
             },
-            "task_defaults": {"locked": False, "mandatory": False, "editable_fields": ["start", "end"]},
+            "task_defaults": {"locked": False, "editable_fields": ["start", "end"]},
         }
         resp = self.client.put("/api/config", json={"payload": seed_payload})
         self.assertEqual(resp.status_code, 200)
@@ -88,8 +88,8 @@ class WebAdminTests(unittest.TestCase):
         update = {
             "calendar_rules": {
                 "per_calendar_defaults": {
-                    "cal-1": {"mode": "immutable", "locked": True, "mandatory": True},
-                    "cal-2": {"mode": "editable", "locked": False, "mandatory": True},
+                    "cal-1": {"mode": "immutable", "locked": True},
+                    "cal-2": {"mode": "editable", "locked": False},
                 }
             }
         }
@@ -111,10 +111,10 @@ class WebAdminTests(unittest.TestCase):
             "intake_calendar_id": "intake-id",
             "intake_calendar_name": "intake",
             "per_calendar_defaults": {
-                "stage-id": {"mode": "immutable", "locked": True, "mandatory": True},
-                "user-id": {"mode": "immutable", "locked": True, "mandatory": True},
-                "intake-id": {"mode": "immutable", "locked": True, "mandatory": True},
-                "cal-3": {"mode": "immutable", "locked": True, "mandatory": True},
+                "stage-id": {"mode": "immutable", "locked": True},
+                "user-id": {"mode": "immutable", "locked": True},
+                "intake-id": {"mode": "immutable", "locked": True},
+                "cal-3": {"mode": "immutable", "locked": True},
             },
         }
         resp = self.client.put("/api/calendar-rules", json=payload)
@@ -125,7 +125,6 @@ class WebAdminTests(unittest.TestCase):
         self.assertNotIn("user-id", rules["per_calendar_defaults"])
         self.assertNotIn("intake-id", rules["per_calendar_defaults"])
         self.assertIn("cal-3", rules["per_calendar_defaults"])
-        self.assertFalse(rules["per_calendar_defaults"]["cal-3"]["mandatory"])
 
     def test_ai_connectivity_api(self) -> None:
         with mock.patch(
@@ -327,7 +326,6 @@ class WebAdminTests(unittest.TestCase):
                     "href": "",
                     "etag": "",
                     "source": "user",
-                    "mandatory": False,
                     "locked": False,
                     "original_calendar_id": "",
                     "original_uid": "",

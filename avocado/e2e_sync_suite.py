@@ -93,12 +93,10 @@ def _build_ai_task_description(
 ) -> str:
     defaults = TaskDefaultsConfig(
         locked=locked,
-        mandatory=False,
         editable_fields=["start", "end", "summary", "location", "description"],
     )
     description, payload, _ = ensure_ai_task_block(base_text, defaults)
     payload["locked"] = bool(locked)
-    payload.pop("mandatory", None)
     payload["editable_fields"] = ["start", "end", "summary", "location", "description"]
     payload["user_intent"] = str(user_intent).strip()
     payload["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -265,7 +263,6 @@ def main() -> int:
         end=move_end,
         source="user",
         locked=False,
-        mandatory=False,
     )
     fixed_before = EventRecord(
         calendar_id=user.calendar_id,
@@ -281,7 +278,6 @@ def main() -> int:
         end=fixed_end,
         source="user",
         locked=True,
-        mandatory=False,
     )
 
     service.upsert_event(user.calendar_id, move_before)

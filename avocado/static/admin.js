@@ -77,7 +77,6 @@ const I18N = {
     "field.intake_calendar_id": "Intake Calendar ID",
     "field.intake_calendar_name": "Intake Calendar Name",
     "field.locked": "Locked",
-    "field.mandatory": "Mandatory",
     "field.editable_fields": "Editable Fields (comma separated)",
     "field.chart_days": "Retention Days",
     "placeholder.keep_secret": "Leave empty to keep current",
@@ -86,7 +85,6 @@ const I18N = {
     "table.name": "Name",
     "table.immutable": "Immutable",
     "table.default_locked": "Default Locked",
-    "table.default_mandatory": "Default Mandatory",
     "table.run_at": "Run At",
     "table.status": "Status",
     "table.trigger": "Trigger",
@@ -219,7 +217,6 @@ const I18N = {
     "field.intake_calendar_id": "新日程日历 ID",
     "field.intake_calendar_name": "新日程日历名称",
     "field.locked": "锁定",
-    "field.mandatory": "强制",
     "field.editable_fields": "可编辑字段（逗号分隔）",
     "field.chart_days": "保留天数",
     "placeholder.keep_secret": "留空则保持当前值",
@@ -228,7 +225,6 @@ const I18N = {
     "table.name": "名称",
     "table.immutable": "不可变",
     "table.default_locked": "默认锁定",
-    "table.default_mandatory": "默认强制",
     "table.run_at": "运行时间",
     "table.status": "状态",
     "table.trigger": "触发方式",
@@ -659,11 +655,6 @@ const bindConfig = (cfg) => {
     cfg.calendar_rules?.intake_calendar_name || "";
 
   document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
-  const mandatoryInput = document.getElementById("task-mandatory");
-  if (mandatoryInput) {
-    mandatoryInput.checked = false;
-    mandatoryInput.disabled = true;
-  }
   document.getElementById("task-editable-fields").value = joinList(
     cfg.task_defaults?.editable_fields || []
   );
@@ -687,7 +678,7 @@ const renderCalendars = (calendars) => {
 
   if (!latestCalendars.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan='4'>${t("empty.calendars")}</td>`;
+    row.innerHTML = `<td colspan='3'>${t("empty.calendars")}</td>`;
     calendarBody.appendChild(row);
     syncImmutableIdsTextarea();
     return;
@@ -701,7 +692,6 @@ const renderCalendars = (calendars) => {
 
     const immutableChecked = !!cal.immutable_selected;
     const lockedChecked = !!cal.default_locked;
-    const mandatoryChecked = !!cal.default_mandatory;
     const name = toDisplayValue(cal.name || "(Unnamed)");
     const calendarId = toDisplayValue(cal.calendar_id);
     const tags = [];
@@ -719,7 +709,6 @@ const renderCalendars = (calendars) => {
       </td>
       <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
       <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
-      <td><input type="checkbox" data-role="mandatory" ${mandatoryChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
     `;
 
     const immutableInput = row.querySelector("input[data-role='immutable']");
@@ -951,7 +940,6 @@ const readCalendarBehavior = () => {
     perCalendarDefaults[calendarId] = {
       mode: immutable ? "immutable" : "editable",
       locked,
-      mandatory: false,
     };
   });
 

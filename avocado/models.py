@@ -25,7 +25,7 @@ You must respect constraints and only return JSON in this schema:
 }
 
 Rules:
-1. Never modify events that are locked=true or mandatory=true.
+1. Never modify events that are locked=true.
 2. Only edit fields: start, end, summary, location, description.
 3. Preserve user intent from [AI Task] block.
 4. Keep output deterministic and concise.
@@ -148,7 +148,6 @@ class CalendarRulesConfig:
                 normalized_defaults[calendar_id] = {
                     "mode": mode,
                     "locked": bool(value.get("locked", False)),
-                    "mandatory": bool(value.get("mandatory", False)),
                 }
         return cls(
             immutable_keywords=[str(x).strip() for x in data.get("immutable_keywords", []) if str(x).strip()],
@@ -171,7 +170,6 @@ class CalendarRulesConfig:
 @dataclass
 class TaskDefaultsConfig:
     locked: bool = False
-    mandatory: bool = False
     editable_fields: list[str] = field(default_factory=lambda: list(DEFAULT_EDITABLE_FIELDS))
 
     @classmethod
@@ -181,7 +179,6 @@ class TaskDefaultsConfig:
         cleaned = [str(x).strip() for x in editable_fields if str(x).strip()]
         return cls(
             locked=bool(data.get("locked", False)),
-            mandatory=bool(data.get("mandatory", False)),
             editable_fields=cleaned or list(DEFAULT_EDITABLE_FIELDS),
         )
 
@@ -233,7 +230,6 @@ class EventRecord:
     href: str = ""
     etag: str = ""
     source: str = "user"
-    mandatory: bool = False
     locked: bool = False
     original_calendar_id: str = ""
     original_uid: str = ""
@@ -257,7 +253,6 @@ class EventRecord:
             href=self.href,
             etag=self.etag,
             source=self.source,
-            mandatory=self.mandatory,
             locked=self.locked,
             original_calendar_id=self.original_calendar_id,
             original_uid=self.original_uid,

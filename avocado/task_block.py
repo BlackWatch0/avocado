@@ -12,6 +12,7 @@ from avocado.models import DEFAULT_EDITABLE_FIELDS, TaskDefaultsConfig
 AI_TASK_START = "[AI Task]"
 AI_TASK_END = "[/AI Task]"
 AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", re.DOTALL)
+ALLOWED_TASK_KEYS = {"version", "locked", "editable_fields", "category", "user_intent", "updated_at"}
 logger = logging.getLogger(__name__)
 
 
@@ -63,9 +64,9 @@ def strip_ai_task_block(description: str) -> str:
 def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dict[str, Any]:
     normalized = build_default_task(defaults)
     parsed = dict(parsed or {})
-    # Backward compatibility: legacy `mandatory` is ignored and removed.
-    parsed.pop("mandatory", None)
-    normalized.update(parsed)
+    for key in ALLOWED_TASK_KEYS:
+        if key in parsed:
+            normalized[key] = parsed[key]
     editable_fields = normalized.get("editable_fields", defaults.editable_fields)
     if not isinstance(editable_fields, list):
         editable_fields = defaults.editable_fields

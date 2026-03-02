@@ -30,7 +30,6 @@ class _FakeCalDAVService:
                     description=(
                         "[AI Task]\n"
                         "locked: false\n"
-                        "mandatory: false\n"
                         "user_intent: move this\n"
                         "[/AI Task]"
                     ),
@@ -45,7 +44,6 @@ class _FakeCalDAVService:
                     description=(
                         "[AI Task]\n"
                         "locked: false\n"
-                        "mandatory: false\n"
                         "user_intent: rename this\n"
                         "[/AI Task]"
                     ),
@@ -198,7 +196,6 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                     event.description = (
                         "[AI Task]\n"
                         "locked: false\n"
-                        "mandatory: false\n"
                         "user_intent:\n"
                         "[/AI Task]"
                     )

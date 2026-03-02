@@ -26,11 +26,11 @@ def apply_change(
     baseline_etag: str,
     editable_fields: Iterable[str] | None = None,
 ) -> ReconcileOutcome:
-    if current_event.locked or current_event.mandatory:
+    if current_event.locked:
         return ReconcileOutcome(
             applied=False,
             conflicted=True,
-            reason="event_locked_or_mandatory",
+            reason="event_locked",
             event=current_event,
             blocked_fields=[],
         )

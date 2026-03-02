@@ -118,7 +118,6 @@ def _event_from_dict(payload: dict[str, Any]) -> EventRecord:
         href=str(payload.get("href", "") or ""),
         etag=str(payload.get("etag", "") or ""),
         source=str(payload.get("source", "user") or "user"),
-        mandatory=bool(payload.get("mandatory", False)),
         locked=bool(payload.get("locked", False)),
         original_calendar_id=str(payload.get("original_calendar_id", "") or ""),
         original_uid=str(payload.get("original_uid", "") or ""),
@@ -249,7 +248,6 @@ def create_app() -> FastAPI:
                     item["managed_duplicate"] = True
                     item["managed_duplicate_role"] = "intake"
             item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
-            item["default_mandatory"] = False
             item["mode"] = "immutable" if immutable_selected else "editable"
             output.append(item)
         return {"calendars": output}
@@ -279,7 +277,6 @@ def create_app() -> FastAPI:
             filtered_defaults[cid] = {
                 "mode": mode,
                 "locked": bool(entry.get("locked", False)),
-                "mandatory": False,
             }
 
         filtered_immutable_ids = [

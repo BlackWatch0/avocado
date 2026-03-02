@@ -778,7 +778,6 @@ class SyncEngine:
                         behavior = per_calendar_defaults.get(calendar.calendar_id, {})
                         task_defaults = TaskDefaultsConfig(
                             locked=bool(behavior.get("locked", True)),
-                            mandatory=False,
                             editable_fields=list(config.task_defaults.editable_fields),
                         )
                         new_description, task_payload, changed = ensure_ai_task_block(
@@ -796,7 +795,6 @@ class SyncEngine:
                                 changed = True
                         event.description = new_description
                         event.locked = bool(task_payload.get("locked", True))
-                        event.mandatory = False
                         if changed:
                             # Immutable source calendars are treated as read-only. Any AI-task
                             # metadata normalization should be maintained on user-layer copies
@@ -829,7 +827,6 @@ class SyncEngine:
                             )
                             immutable_user_defaults = TaskDefaultsConfig(
                                 locked=True,
-                                mandatory=False,
                                 editable_fields=list(config.task_defaults.editable_fields),
                             )
                             mirror_description, mirror_task_payload, _ = ensure_ai_task_block(
@@ -844,7 +841,6 @@ class SyncEngine:
                                 )
                             mirror_event.description = mirror_description
                             mirror_event.locked = True
-                            mirror_event.mandatory = False
                             should_upsert_mirror = (
                                 existing_user is None
                                 or _event_fingerprint(existing_user) != _event_fingerprint(mirror_event)
@@ -870,16 +866,13 @@ class SyncEngine:
                         behavior = per_calendar_defaults.get(calendar.calendar_id, {})
                         task_defaults = TaskDefaultsConfig(
                             locked=bool(behavior.get("locked", config.task_defaults.locked)),
-                            mandatory=False,
                             editable_fields=list(config.task_defaults.editable_fields),
                         )
                         parsed_task_payload = parse_ai_task_block(event.description or "")
                         if isinstance(parsed_task_payload, dict):
                             event.locked = bool(parsed_task_payload.get("locked", task_defaults.locked))
-                            event.mandatory = False
                         else:
                             event.locked = task_defaults.locked
-                            event.mandatory = False
 
                         # Seed user-layer event from non-stage/non-user calendars if missing.
                         if _managed_uid_prefix_depth(event.uid) >= 2:
@@ -1010,7 +1003,6 @@ class SyncEngine:
                 behavior = per_calendar_defaults.get(user_info.calendar_id, {})
                 task_defaults = TaskDefaultsConfig(
                     locked=bool(behavior.get("locked", config.task_defaults.locked)),
-                    mandatory=False,
                     editable_fields=list(config.task_defaults.editable_fields),
                 )
                 new_description, task_payload, changed = ensure_ai_task_block(user_event.description, task_defaults)
@@ -1024,7 +1016,6 @@ class SyncEngine:
                         changed = True
                 user_event.description = new_description
                 user_event.locked = bool(task_payload.get("locked", task_defaults.locked))
-                user_event.mandatory = False
                 if changed:
                     user_event = caldav_service.upsert_event(user_info.calendar_id, user_event)
                     user_map[user_event.uid] = user_event
@@ -1063,7 +1054,7 @@ class SyncEngine:
                 event_key = (event.calendar_id, event.uid)
                 if event_key in mutable_events and event_key not in intent_target_keys:
                     # Non-target mutable events are constraints only in this planning pass.
-                    planning_events.append(event.with_updates(locked=True, mandatory=True))
+                    planning_events.append(event.with_updates(locked=True))
                 else:
                     planning_events.append(event)
             target_events_payload: list[dict[str, Any]] = []

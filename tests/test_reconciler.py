@@ -88,7 +88,7 @@ class ReconcilerTests(unittest.TestCase):
         )
         self.assertFalse(outcome.applied)
         self.assertTrue(outcome.conflicted)
-        self.assertEqual(outcome.reason, "event_locked_or_mandatory")
+        self.assertEqual(outcome.reason, "event_locked")
 
 
 if __name__ == "__main__":

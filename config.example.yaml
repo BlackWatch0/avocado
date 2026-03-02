@@ -26,7 +26,7 @@ ai:
       ]
     }
     Rules:
-    1. Never modify events that are locked=true or mandatory=true.
+    1. Never modify events that are locked=true.
     2. Only edit fields: start, end, summary, location, description.
     3. Preserve user intent from [AI Task] block.
     4. Keep output deterministic and concise.
@@ -52,7 +52,6 @@ calendar_rules:
 
 task_defaults:
   locked: false
-  mandatory: false
   editable_fields:
     - start
     - end

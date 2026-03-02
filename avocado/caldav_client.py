@@ -284,7 +284,6 @@ class CalDAVService:
 
         parsed = self._parse_resource(calendar_id, updated_resource)
         parsed.source = event.source
-        parsed.mandatory = event.mandatory
         parsed.locked = event.locked
         parsed.original_calendar_id = event.original_calendar_id
         parsed.original_uid = event.original_uid

@@ -129,7 +129,6 @@ Admin page behavior:
 - per-calendar default behavior can be configured in UI:
   - immutable/editable
   - default locked
-  - default mandatory
 - AI Base URL defaults to `https://api.openai.com/v1`
 - API connectivity test is available as a blue inline link directly below AI Base URL
 - after connectivity test, available models are loaded into Model dropdown
@@ -138,7 +137,7 @@ Admin page behavior:
 - admin page supports English/Chinese UI:
   - default language follows browser language
   - manual override available from the language selector in header
-- `[AI Task]` block is simplified and includes key fields: `locked`, `mandatory`, `editable_fields`, `category`, `user_intent`
+- `[AI Task]` block is simplified and includes key fields: `locked`, `editable_fields`, `category`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
 - logs page includes an AI request-bytes line chart (derived from audit action `ai_request`)
 - AI request-bytes chart auto refreshes every 30s and supports custom retention days (default 90)

@@ -17,8 +17,8 @@ class ModelsTests(unittest.TestCase):
                 "intake_calendar_id": "intake-id",
                 "intake_calendar_name": "Inbox Layer",
                 "per_calendar_defaults": {
-                    "cal-1": {"mode": "IMMUTABLE", "locked": 1, "mandatory": 0},
-                    "cal-2": {"mode": "invalid", "locked": False, "mandatory": True},
+                    "cal-1": {"mode": "IMMUTABLE", "locked": 1},
+                    "cal-2": {"mode": "invalid", "locked": False},
                     "": {"mode": "immutable"},
                 }
             }
@@ -29,7 +29,6 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(cfg.intake_calendar_name, "Inbox Layer")
         self.assertEqual(cfg.per_calendar_defaults["cal-1"]["mode"], "immutable")
         self.assertTrue(cfg.per_calendar_defaults["cal-1"]["locked"])
-        self.assertFalse(cfg.per_calendar_defaults["cal-1"]["mandatory"])
         self.assertEqual(cfg.per_calendar_defaults["cal-2"]["mode"], "editable")
         self.assertNotIn("", cfg.per_calendar_defaults)
 

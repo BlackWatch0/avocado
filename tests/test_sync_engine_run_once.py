@@ -23,7 +23,7 @@ class SyncEngineRunOnceTests(TestCase):
                     "intake_calendar_name": "Avocado New Events",
                     "immutable_calendar_ids": ["immutable-cal"],
                     "per_calendar_defaults": {
-                        "immutable-cal": {"mode": "immutable", "locked": True, "mandatory": True}
+                        "immutable-cal": {"mode": "immutable", "locked": True}
                     },
                 },
             }

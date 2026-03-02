@@ -1,74 +1,69 @@
-[
+﻿[
   {
-    "name": "力量+爬坡训练",
+    "name": "鍔涢噺+鐖潯璁粌",
     "source_calendar": "user",
     "expect": "move_earlier_30m",
     "day_offset": 1,
     "start_local": "20:00",
     "end_local": "21:00",
-    "location": "健身房",
+    "location": "鍋ヨ韩鎴?,
     "locked": false,
-    "mandatory": false,
-    "description": "我要爬坡加力量训练，帮我安排一套 60 分钟方案放在简介\n[AI Task]\nversion: 1\nlocked: false\nmandatory: false\neditable_fields:\n  - start\n  - end\n  - description\nuser_intent: 提前30分钟，训练强度中高，保留热身和拉伸\n[/AI Task]"
+    "description": "鎴戣鐖潯鍔犲姏閲忚缁冿紝甯垜瀹夋帓涓€濂?60 鍒嗛挓鏂规鏀惧湪绠€浠媆n[AI Task]\nversion: 1\nlocked: false\neditable_fields:\n  - start\n  - end\n  - description\nuser_intent: 鎻愬墠30鍒嗛挓锛岃缁冨己搴︿腑楂橈紝淇濈暀鐑韩鍜屾媺浼竆n[/AI Task]"
   },
   {
-    "name": "晚饭",
+    "name": "鏅氶キ",
     "source_calendar": "user",
     "expect": "locked_not_moved",
     "day_offset": 1,
     "start_local": "18:00",
     "end_local": "19:00",
-    "location": "家",
+    "location": "瀹?,
     "locked": true,
-    "mandatory": true,
-    "description": "家庭晚饭\n[AI Task]\nversion: 1\nlocked: true\nmandatory: true\neditable_fields:\n  - description\nuser_intent:\n[/AI Task]"
+    "description": "瀹跺涵鏅氶キ\n[AI Task]\nversion: 1\nlocked: true\neditable_fields:\n  - description\nuser_intent:\n[/AI Task]"
   },
   {
-    "name": "通勤回家",
+    "name": "閫氬嫟鍥炲",
     "source_calendar": "user",
     "expect": "no_intent_not_moved",
     "day_offset": 1,
     "start_local": "17:30",
     "end_local": "18:00",
-    "location": "通勤路上",
+    "location": "閫氬嫟璺笂",
     "locked": false,
-    "mandatory": false,
-    "description": "日常通勤\n[AI Task]\nversion: 1\nlocked: false\nmandatory: false\neditable_fields:\n  - start\n  - end\n  - location\nuser_intent:\n[/AI Task]"
+    "description": "鏃ュ父閫氬嫟\n[AI Task]\nversion: 1\nlocked: false\neditable_fields:\n  - start\n  - end\n  - location\nuser_intent:\n[/AI Task]"
   },
   {
-    "name": "英语复习",
+    "name": "鑻辫澶嶄範",
     "source_calendar": "user",
     "expect": "desc_update_only",
     "day_offset": 2,
     "start_local": "21:00",
     "end_local": "22:00",
-    "location": "书桌",
+    "location": "涔︽",
     "locked": false,
-    "mandatory": false,
-    "description": "复习阅读和听力\n[AI Task]\nversion: 1\nlocked: false\nmandatory: false\neditable_fields:\n  - description\nuser_intent: 帮我在简介里拆成25分钟阅读+25分钟听力+10分钟复盘\n[/AI Task]"
+    "description": "澶嶄範闃呰鍜屽惉鍔沑n[AI Task]\nversion: 1\nlocked: false\neditable_fields:\n  - description\nuser_intent: 甯垜鍦ㄧ畝浠嬮噷鎷嗘垚25鍒嗛挓闃呰+25鍒嗛挓鍚姏+10鍒嗛挓澶嶇洏\n[/AI Task]"
   },
   {
-    "name": "会议准备",
+    "name": "浼氳鍑嗗",
     "source_calendar": "user",
     "expect": "desc_update_no_time_change",
     "day_offset": 2,
     "start_local": "14:00",
     "end_local": "14:30",
-    "location": "办公室",
+    "location": "鍔炲叕瀹?,
     "locked": false,
-    "mandatory": true,
-    "description": "准备周会材料\n[AI Task]\nversion: 1\nlocked: false\nmandatory: true\neditable_fields:\n  - description\nuser_intent: 只补充准备清单，不要改时间\n[/AI Task]"
+    "description": "鍑嗗鍛ㄤ細鏉愭枡\n[AI Task]\nversion: 1\nlocked: false\neditable_fields:\n  - description\nuser_intent: 鍙ˉ鍏呭噯澶囨竻鍗曪紝涓嶈鏀规椂闂碶n[/AI Task]"
   },
   {
-    "name": "新日程导入验证",
+    "name": "鏂版棩绋嬪鍏ラ獙璇?,
     "source_calendar": "intake",
     "expect": "intake_import_keep_time",
     "day_offset": 1,
     "start_local": "16:30",
     "end_local": "17:00",
-    "location": "图书馆",
+    "location": "鍥句功棣?,
     "locked": false,
-    "mandatory": false,
-    "description": "新建待安排日程（测试 intake 导入）\n[AI Task]\nversion: 1\nlocked: false\nmandatory: false\neditable_fields:\n  - start\n  - end\n  - description\nuser_intent:\n[/AI Task]"
+    "description": "鏂板缓寰呭畨鎺掓棩绋嬶紙娴嬭瘯 intake 瀵煎叆锛塡n[AI Task]\nversion: 1\nlocked: false\neditable_fields:\n  - start\n  - end\n  - description\nuser_intent:\n[/AI Task]"
   }
 ]
+

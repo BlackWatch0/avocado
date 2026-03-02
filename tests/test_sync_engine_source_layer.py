@@ -108,7 +108,6 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
                         _FakeCalDAVService.source_calendar_id: {
                             "mode": "editable",
                             "locked": False,
-                            "mandatory": False,
                         }
                     },
                 },

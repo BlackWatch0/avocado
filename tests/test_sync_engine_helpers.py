@@ -41,12 +41,12 @@ class SyncEngineHelperTests(unittest.TestCase):
         event_without_intent = EventRecord(
             calendar_id="cal",
             uid="uid-1",
-            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent: \"\"\n[/AI Task]",
+            description="[AI Task]\nlocked: false\nuser_intent: \"\"\n[/AI Task]",
         )
         event_with_intent = EventRecord(
             calendar_id="cal",
             uid="uid-2",
-            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent: \"move to around 3pm\"\n[/AI Task]",
+            description="[AI Task]\nlocked: false\nuser_intent: \"move to around 3pm\"\n[/AI Task]",
         )
         self.assertFalse(_event_has_user_intent(event_without_intent))
         self.assertTrue(_event_has_user_intent(event_with_intent))
@@ -55,7 +55,7 @@ class SyncEngineHelperTests(unittest.TestCase):
         event_with_null_intent = EventRecord(
             calendar_id="cal",
             uid="uid-null",
-            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent:\n[/AI Task]",
+            description="[AI Task]\nlocked: false\nuser_intent:\n[/AI Task]",
         )
         self.assertFalse(_event_has_user_intent(event_with_null_intent))
 
@@ -73,7 +73,7 @@ class SyncEngineHelperTests(unittest.TestCase):
             calendar_id="cal",
             uid="uid-5",
             description=(
-                "[AI Task]\nlocked: false\nmandatory: false\n"
+                "[AI Task]\nlocked: false\n"
                 "editable_fields:\n  - start\n  - end\n[/AI Task]"
             ),
         )
