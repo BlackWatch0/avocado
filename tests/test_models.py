@@ -9,28 +9,23 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(cfg.base_url, "https://api.openai.com/v1")
         self.assertTrue(bool(cfg.system_prompt.strip()))
 
-    def test_calendar_rules_per_calendar_defaults_normalized(self) -> None:
+    def test_calendar_rules_fields_use_stack_user_new(self) -> None:
         cfg = CalendarRulesConfig.from_dict(
             {
                 "user_calendar_id": "user-id",
                 "user_calendar_name": "User Layer",
-                "intake_calendar_id": "intake-id",
-                "intake_calendar_name": "Inbox Layer",
-                "per_calendar_defaults": {
-                    "cal-1": {"mode": "IMMUTABLE", "locked": 1},
-                    "cal-2": {"mode": "invalid", "locked": False},
-                    "": {"mode": "immutable"},
-                }
+                "new_calendar_id": "new-id",
+                "new_calendar_name": "Inbox Layer",
+                "stack_calendar_id": "stack-id",
+                "stack_calendar_name": "Stack Layer",
             }
         )
+        self.assertEqual(cfg.stack_calendar_id, "stack-id")
+        self.assertEqual(cfg.stack_calendar_name, "Stack Layer")
         self.assertEqual(cfg.user_calendar_id, "user-id")
         self.assertEqual(cfg.user_calendar_name, "User Layer")
-        self.assertEqual(cfg.intake_calendar_id, "intake-id")
-        self.assertEqual(cfg.intake_calendar_name, "Inbox Layer")
-        self.assertEqual(cfg.per_calendar_defaults["cal-1"]["mode"], "immutable")
-        self.assertTrue(cfg.per_calendar_defaults["cal-1"]["locked"])
-        self.assertEqual(cfg.per_calendar_defaults["cal-2"]["mode"], "editable")
-        self.assertNotIn("", cfg.per_calendar_defaults)
+        self.assertEqual(cfg.new_calendar_id, "new-id")
+        self.assertEqual(cfg.new_calendar_name, "Inbox Layer")
 
 
 if __name__ == "__main__":

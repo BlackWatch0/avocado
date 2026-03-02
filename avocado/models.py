@@ -88,6 +88,7 @@ class AIConfig:
     api_key: str = ""
     model: str = "gpt-4o-mini"
     timeout_seconds: int = 90
+    enabled: bool = True
     system_prompt: str = DEFAULT_AI_SYSTEM_PROMPT
 
     @classmethod
@@ -99,6 +100,7 @@ class AIConfig:
             api_key=str(data.get("api_key", "")).strip(),
             model=str(data.get("model", "gpt-4o-mini")).strip() or "gpt-4o-mini",
             timeout_seconds=int(data.get("timeout_seconds", 90)),
+            enabled=bool(data.get("enabled", True)),
             system_prompt=str(data.get("system_prompt", DEFAULT_AI_SYSTEM_PROMPT)).strip()
             or DEFAULT_AI_SYSTEM_PROMPT,
         )
@@ -109,6 +111,7 @@ class SyncConfig:
     window_days: int = 7
     interval_seconds: int = 300
     timezone: str = "UTC"
+    freeze_hours: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "SyncConfig":
@@ -117,53 +120,48 @@ class SyncConfig:
             window_days=max(1, int(data.get("window_days", 7))),
             interval_seconds=max(30, int(data.get("interval_seconds", 300))),
             timezone=str(data.get("timezone", "UTC")).strip() or "UTC",
+            freeze_hours=max(0, int(data.get("freeze_hours", 0))),
         )
 
 
 @dataclass
 class CalendarRulesConfig:
-    immutable_keywords: list[str] = field(default_factory=lambda: ["work", "固定", "fixed"])
-    immutable_calendar_ids: list[str] = field(default_factory=list)
-    staging_calendar_id: str = ""
-    staging_calendar_name: str = "Avocado AI Staging"
+    stack_calendar_id: str = ""
+    stack_calendar_name: str = "Avocado Stack Calendar"
     user_calendar_id: str = ""
     user_calendar_name: str = "Avocado User Calendar"
-    intake_calendar_id: str = ""
-    intake_calendar_name: str = "Avocado New Events"
-    per_calendar_defaults: dict[str, dict[str, Any]] = field(default_factory=dict)
+    new_calendar_id: str = ""
+    new_calendar_name: str = "Avocado New Calendar"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "CalendarRulesConfig":
         data = data or {}
-        raw_defaults = data.get("per_calendar_defaults", {})
-        normalized_defaults: dict[str, dict[str, Any]] = {}
-        if isinstance(raw_defaults, dict):
-            for key, value in raw_defaults.items():
-                calendar_id = str(key).strip()
-                if not calendar_id or not isinstance(value, dict):
-                    continue
-                mode = str(value.get("mode", "editable")).strip().lower()
-                if mode not in {"editable", "immutable"}:
-                    mode = "editable"
-                normalized_defaults[calendar_id] = {
-                    "mode": mode,
-                    "locked": bool(value.get("locked", False)),
-                }
+        stack_calendar_id = str(
+            data.get("stack_calendar_id", data.get("staging_calendar_id", ""))
+        ).strip()
+        stack_calendar_name = str(
+            data.get("stack_calendar_name", data.get("staging_calendar_name", "Avocado Stack Calendar"))
+        ).strip()
+        if not stack_calendar_name:
+            stack_calendar_name = "Avocado Stack Calendar"
+        user_calendar_name = str(data.get("user_calendar_name", "Avocado User Calendar")).strip()
+        if not user_calendar_name:
+            user_calendar_name = "Avocado User Calendar"
+        new_calendar_id = str(
+            data.get("new_calendar_id", data.get("intake_calendar_id", ""))
+        ).strip()
+        new_calendar_name = str(
+            data.get("new_calendar_name", data.get("intake_calendar_name", "Avocado New Calendar"))
+        ).strip()
+        if not new_calendar_name:
+            new_calendar_name = "Avocado New Calendar"
         return cls(
-            immutable_keywords=[str(x).strip() for x in data.get("immutable_keywords", []) if str(x).strip()],
-            immutable_calendar_ids=[
-                str(x).strip() for x in data.get("immutable_calendar_ids", []) if str(x).strip()
-            ],
-            staging_calendar_id=str(data.get("staging_calendar_id", "")).strip(),
-            staging_calendar_name=str(data.get("staging_calendar_name", "Avocado AI Staging")).strip()
-            or "Avocado AI Staging",
+            stack_calendar_id=stack_calendar_id,
+            stack_calendar_name=stack_calendar_name,
             user_calendar_id=str(data.get("user_calendar_id", "")).strip(),
-            user_calendar_name=str(data.get("user_calendar_name", "Avocado User Calendar")).strip()
-            or "Avocado User Calendar",
-            intake_calendar_id=str(data.get("intake_calendar_id", "")).strip(),
-            intake_calendar_name=str(data.get("intake_calendar_name", "Avocado New Events")).strip()
-            or "Avocado New Events",
-            per_calendar_defaults=normalized_defaults,
+            user_calendar_name=user_calendar_name,
+            new_calendar_id=new_calendar_id,
+            new_calendar_name=new_calendar_name,
         )
 
 
@@ -211,7 +209,6 @@ class CalendarInfo:
     calendar_id: str
     name: str
     url: str
-    immutable_suggested: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -230,6 +227,9 @@ class EventRecord:
     href: str = ""
     etag: str = ""
     source: str = "user"
+    x_sync_id: str = ""
+    x_source: str = ""
+    x_source_uid: str = ""
     locked: bool = False
     original_calendar_id: str = ""
     original_uid: str = ""
@@ -253,6 +253,9 @@ class EventRecord:
             href=self.href,
             etag=self.etag,
             source=self.source,
+            x_sync_id=self.x_sync_id,
+            x_source=self.x_source,
+            x_source_uid=self.x_source_uid,
             locked=self.locked,
             original_calendar_id=self.original_calendar_id,
             original_uid=self.original_uid,

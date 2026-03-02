@@ -61,6 +61,48 @@ class StateStore:
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS sync_tokens (
+            source_key TEXT PRIMARY KEY,
+            sync_token TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS event_mappings (
+            sync_id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            source_calendar_id TEXT NOT NULL,
+            source_uid TEXT NOT NULL,
+            source_href_hash TEXT NOT NULL,
+            user_uid TEXT NOT NULL,
+            stack_uid TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_event_mappings_source_uid
+            ON event_mappings(source, source_calendar_id, source_uid);
+        CREATE INDEX IF NOT EXISTS idx_event_mappings_user_uid
+            ON event_mappings(user_uid);
+        CREATE INDEX IF NOT EXISTS idx_event_mappings_stack_uid
+            ON event_mappings(stack_uid);
+
+        CREATE TABLE IF NOT EXISTS suppression_tombstones (
+            source TEXT NOT NULL,
+            source_calendar_id TEXT NOT NULL,
+            source_uid TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (source, source_calendar_id, source_uid)
+        );
+
+        CREATE TABLE IF NOT EXISTS pending_new_cleanup (
+            new_uid TEXT PRIMARY KEY,
+            new_href TEXT NOT NULL,
+            mapped_sync_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
         """
         with self._lock:
             with self._connect() as conn:
@@ -274,6 +316,292 @@ class StateStore:
         if row is None:
             return None
         return str(row["value"])
+
+    def set_sync_token(self, *, source_key: str, sync_token: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO sync_tokens(source_key, sync_token, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(source_key) DO UPDATE SET
+                        sync_token = excluded.sync_token,
+                        updated_at = excluded.updated_at
+                    """,
+                    (str(source_key), str(sync_token), _utc_now()),
+                )
+                conn.commit()
+
+    def get_sync_token(self, *, source_key: str) -> str | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT sync_token
+                    FROM sync_tokens
+                    WHERE source_key = ?
+                    """,
+                    (str(source_key),),
+                ).fetchone()
+        if row is None:
+            return None
+        return str(row["sync_token"])
+
+    def list_sync_tokens(self) -> dict[str, str]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT source_key, sync_token
+                    FROM sync_tokens
+                    """
+                ).fetchall()
+        return {str(row["source_key"]): str(row["sync_token"]) for row in rows}
+
+    def upsert_event_mapping(
+        self,
+        *,
+        sync_id: str,
+        source: str,
+        source_calendar_id: str,
+        source_uid: str,
+        source_href_hash: str,
+        user_uid: str,
+        stack_uid: str,
+        status: str = "active",
+    ) -> None:
+        now = _utc_now()
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO event_mappings(
+                        sync_id,
+                        source,
+                        source_calendar_id,
+                        source_uid,
+                        source_href_hash,
+                        user_uid,
+                        stack_uid,
+                        status,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(sync_id) DO UPDATE SET
+                        source = excluded.source,
+                        source_calendar_id = excluded.source_calendar_id,
+                        source_uid = excluded.source_uid,
+                        source_href_hash = excluded.source_href_hash,
+                        user_uid = excluded.user_uid,
+                        stack_uid = excluded.stack_uid,
+                        status = excluded.status,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(sync_id),
+                        str(source),
+                        str(source_calendar_id),
+                        str(source_uid),
+                        str(source_href_hash),
+                        str(user_uid),
+                        str(stack_uid),
+                        str(status),
+                        now,
+                        now,
+                    ),
+                )
+                conn.commit()
+
+    def _get_event_mapping_row(self, query: str, params: tuple[Any, ...]) -> dict[str, Any] | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(query, params).fetchone()
+        return dict(row) if row else None
+
+    def get_event_mapping_by_sync_id(self, sync_id: str) -> dict[str, Any] | None:
+        return self._get_event_mapping_row(
+            """
+            SELECT *
+            FROM event_mappings
+            WHERE sync_id = ?
+            """,
+            (str(sync_id),),
+        )
+
+    def get_event_mapping_by_source(
+        self, *, source: str, source_calendar_id: str, source_uid: str
+    ) -> dict[str, Any] | None:
+        return self._get_event_mapping_row(
+            """
+            SELECT *
+            FROM event_mappings
+            WHERE source = ? AND source_calendar_id = ? AND source_uid = ?
+            """,
+            (str(source), str(source_calendar_id), str(source_uid)),
+        )
+
+    def get_event_mapping_by_user_uid(self, user_uid: str) -> dict[str, Any] | None:
+        return self._get_event_mapping_row(
+            """
+            SELECT *
+            FROM event_mappings
+            WHERE user_uid = ?
+            """,
+            (str(user_uid),),
+        )
+
+    def get_event_mapping_by_stack_uid(self, stack_uid: str) -> dict[str, Any] | None:
+        return self._get_event_mapping_row(
+            """
+            SELECT *
+            FROM event_mappings
+            WHERE stack_uid = ?
+            """,
+            (str(stack_uid),),
+        )
+
+    def list_event_mappings(self) -> list[dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM event_mappings
+                    """
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_event_mapping_status(self, *, sync_id: str, status: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE event_mappings
+                    SET status = ?, updated_at = ?
+                    WHERE sync_id = ?
+                    """,
+                    (str(status), _utc_now(), str(sync_id)),
+                )
+                conn.commit()
+
+    def upsert_suppression_tombstone(
+        self,
+        *,
+        source: str,
+        source_calendar_id: str,
+        source_uid: str,
+        reason: str,
+        expires_at: str,
+    ) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO suppression_tombstones(
+                        source,
+                        source_calendar_id,
+                        source_uid,
+                        reason,
+                        expires_at,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(source, source_calendar_id, source_uid) DO UPDATE SET
+                        reason = excluded.reason,
+                        expires_at = excluded.expires_at
+                    """,
+                    (
+                        str(source),
+                        str(source_calendar_id),
+                        str(source_uid),
+                        str(reason),
+                        str(expires_at),
+                        _utc_now(),
+                    ),
+                )
+                conn.commit()
+
+    def get_suppression_tombstone(
+        self, *, source: str, source_calendar_id: str, source_uid: str
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM suppression_tombstones
+                    WHERE source = ? AND source_calendar_id = ? AND source_uid = ?
+                    """,
+                    (str(source), str(source_calendar_id), str(source_uid)),
+                ).fetchone()
+        return dict(row) if row else None
+
+    def list_active_suppression_tombstones(self, *, now_iso: str) -> list[dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM suppression_tombstones
+                    WHERE expires_at > ?
+                    """,
+                    (str(now_iso),),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_suppression_tombstone(
+        self, *, source: str, source_calendar_id: str, source_uid: str
+    ) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM suppression_tombstones
+                    WHERE source = ? AND source_calendar_id = ? AND source_uid = ?
+                    """,
+                    (str(source), str(source_calendar_id), str(source_uid)),
+                )
+                conn.commit()
+
+    def enqueue_pending_new_cleanup(self, *, new_uid: str, new_href: str, mapped_sync_id: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO pending_new_cleanup(new_uid, new_href, mapped_sync_id, created_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(new_uid) DO UPDATE SET
+                        new_href = excluded.new_href,
+                        mapped_sync_id = excluded.mapped_sync_id
+                    """,
+                    (str(new_uid), str(new_href), str(mapped_sync_id), _utc_now()),
+                )
+                conn.commit()
+
+    def list_pending_new_cleanup(self) -> list[dict[str, Any]]:
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM pending_new_cleanup
+                    ORDER BY created_at ASC
+                    """
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def dequeue_pending_new_cleanup(self, *, new_uid: str) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM pending_new_cleanup
+                    WHERE new_uid = ?
+                    """,
+                    (str(new_uid),),
+                )
+                conn.commit()
 
     def ai_request_bytes_series(self, *, days: int = 90, limit: int = 5000) -> list[dict[str, Any]]:
         days = max(1, int(days))

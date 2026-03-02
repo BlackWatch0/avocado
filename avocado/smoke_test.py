@@ -101,9 +101,9 @@ def main() -> int:
                 "ai_model": config.ai.model,
                 "timezone": config.sync.timezone,
                 "window_days": config.sync.window_days,
-                "staging_calendar_id": config.calendar_rules.staging_calendar_id,
+                "stack_calendar_id": config.calendar_rules.stack_calendar_id,
                 "user_calendar_id": config.calendar_rules.user_calendar_id,
-                "intake_calendar_id": config.calendar_rules.intake_calendar_id,
+                "new_calendar_id": config.calendar_rules.new_calendar_id,
             },
             ensure_ascii=False,
         ),
@@ -116,21 +116,21 @@ def main() -> int:
             calendars = service.list_calendars()
             _ok("CalDAV connected", f"{len(calendars)} calendars found")
 
-            stage_info = service.ensure_staging_calendar(
-                config.calendar_rules.staging_calendar_id,
-                config.calendar_rules.staging_calendar_name,
+            stack_info = service.ensure_managed_calendar(
+                config.calendar_rules.stack_calendar_id,
+                config.calendar_rules.stack_calendar_name,
             )
-            user_info = service.ensure_staging_calendar(
+            user_info = service.ensure_managed_calendar(
                 config.calendar_rules.user_calendar_id,
                 config.calendar_rules.user_calendar_name,
             )
-            intake_info = service.ensure_staging_calendar(
-                config.calendar_rules.intake_calendar_id,
-                config.calendar_rules.intake_calendar_name,
+            new_info = service.ensure_managed_calendar(
+                config.calendar_rules.new_calendar_id,
+                config.calendar_rules.new_calendar_name,
             )
-            _ok("Managed calendars", f"stage={stage_info.calendar_id}")
+            _ok("Managed calendars", f"stack={stack_info.calendar_id}")
             _ok("Managed calendars", f"user={user_info.calendar_id}")
-            _ok("Managed calendars", f"intake={intake_info.calendar_id}")
+            _ok("Managed calendars", f"new={new_info.calendar_id}")
 
             start, end = _window_from_args(config.sync.window_days, args.start, args.end)
             _line("Event sample window", f"{serialize_datetime(start)} -> {serialize_datetime(end)}")

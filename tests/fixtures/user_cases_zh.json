@@ -56,8 +56,8 @@
   },
   {
     "name": "鏂版棩绋嬪鍏ラ獙璇?,
-    "source_calendar": "intake",
-    "expect": "intake_import_keep_time",
+    "source_calendar": "new",
+    "expect": "new_import_keep_time",
     "day_offset": 1,
     "start_local": "16:30",
     "end_local": "17:00",
@@ -66,4 +66,5 @@
     "description": "鏂板缓寰呭畨鎺掓棩绋嬶紙娴嬭瘯 intake 瀵煎叆锛塡n[AI Task]\nversion: 1\nlocked: false\neditable_fields:\n  - start\n  - end\n  - description\nuser_intent:\n[/AI Task]"
   }
 ]
+
 

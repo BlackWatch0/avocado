@@ -9,7 +9,6 @@ from avocado.models import DEFAULT_AI_SYSTEM_PROMPT, EventRecord
 def build_planning_payload(
     *,
     events: list[EventRecord],
-    immutable_calendar_ids: list[str],
     window_start: str,
     window_end: str,
     timezone: str,
@@ -21,7 +20,6 @@ def build_planning_payload(
             "end": window_end,
             "timezone": timezone,
         },
-        "immutable_calendar_ids": immutable_calendar_ids,
         "events": [event.to_dict() for event in events],
     }
     if target_events:

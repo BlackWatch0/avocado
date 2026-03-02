@@ -1,24 +1,24 @@
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from avocado.config_manager import ConfigManager
 from avocado.models import CalendarInfo, EventRecord
 from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine, _staging_uid
+from avocado.sync_engine import SyncEngine
 
 
 class _FakeCalDAVService:
     source_calendar_id = "source-cal"
-    staging_calendar_id = "stage-cal"
+    stack_calendar_id = "stack-cal"
     user_calendar_id = "user-cal"
-    intake_calendar_id = "intake-cal"
+    new_calendar_id = "new-cal"
 
     def __init__(self, _config: object) -> None:
-        start = datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
+        start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) + timedelta(hours=2)
+        end = start + timedelta(hours=1)
         self.events_by_calendar = {
             self.source_calendar_id: {
                 "source-uid": EventRecord(
@@ -31,51 +31,71 @@ class _FakeCalDAVService:
                     etag="src-etag",
                 )
             },
-            self.staging_calendar_id: {},
+            self.stack_calendar_id: {},
             self.user_calendar_id: {},
-            self.intake_calendar_id: {},
+            self.new_calendar_id: {},
         }
         self.upsert_calls: list[tuple[str, EventRecord]] = []
 
     def list_calendars(self) -> list[CalendarInfo]:
         return [
             CalendarInfo(calendar_id=self.source_calendar_id, name="Personal", url=self.source_calendar_id),
-            CalendarInfo(calendar_id=self.staging_calendar_id, name="Avocado AI Staging", url=self.staging_calendar_id),
+            CalendarInfo(calendar_id=self.stack_calendar_id, name="Avocado Stack Calendar", url=self.stack_calendar_id),
             CalendarInfo(calendar_id=self.user_calendar_id, name="Avocado User Calendar", url=self.user_calendar_id),
-            CalendarInfo(calendar_id=self.intake_calendar_id, name="Avocado New Events", url=self.intake_calendar_id),
+            CalendarInfo(calendar_id=self.new_calendar_id, name="Avocado New Calendar", url=self.new_calendar_id),
         ]
 
-    def ensure_staging_calendar(self, calendar_id: str, calendar_name: str) -> CalendarInfo:
+    def ensure_managed_calendar(self, calendar_id: str, calendar_name: str) -> CalendarInfo:
         cid = calendar_id
         if not cid:
             mapping = {
-                "Avocado AI Staging": self.staging_calendar_id,
+                "Avocado Stack Calendar": self.stack_calendar_id,
                 "Avocado User Calendar": self.user_calendar_id,
-                "Avocado New Events": self.intake_calendar_id,
+                "Avocado New Calendar": self.new_calendar_id,
             }
             cid = mapping[calendar_name]
         return CalendarInfo(calendar_id=cid, name=calendar_name, url=cid)
 
-    def suggest_immutable_calendar_ids(self, calendars: list[CalendarInfo], keywords: list[str]) -> set[str]:
-        return set()
+    def fetch_changes_by_token(self, calendar_id: str, _token: str) -> dict:
+        return {
+            "supported": True,
+            "add_update": [],
+            "delete": [],
+            "next_token": f"next-{calendar_id}",
+        }
+
+    def list_window_index(self, calendar_id: str, _start: datetime, _end: datetime) -> list[dict]:
+        return [
+            {
+                "uid": event.uid,
+                "href": event.href or f"{calendar_id}/{event.uid}.ics",
+                "etag": event.etag,
+            }
+            for event in self.events_by_calendar.get(calendar_id, {}).values()
+        ]
 
     def fetch_events(self, calendar_id: str, _start: datetime, _end: datetime) -> list[EventRecord]:
         return [item.clone() for item in self.events_by_calendar.get(calendar_id, {}).values()]
 
-    def upsert_event(self, calendar_id: str, event: EventRecord) -> EventRecord:
+    def upsert_event(self, calendar_id: str, event: EventRecord, expected_etag: str = "") -> EventRecord:
+        current = self.events_by_calendar.setdefault(calendar_id, {}).get(event.uid)
+        if expected_etag and current is not None and current.etag and current.etag != expected_etag:
+            raise RuntimeError("etag_conflict")
         saved = event.clone()
         saved.calendar_id = calendar_id
         saved.etag = f"etag-{calendar_id}-{saved.uid}"
+        saved.href = saved.href or f"{calendar_id}/{saved.uid}.ics"
         self.events_by_calendar.setdefault(calendar_id, {})[saved.uid] = saved
         self.upsert_calls.append((calendar_id, saved.clone()))
         return saved
 
     def delete_event(self, calendar_id: str, uid: str, href: str = "") -> bool:
-        calendar_events = self.events_by_calendar.get(calendar_id, {})
-        if uid in calendar_events:
-            del calendar_events[uid]
-            return True
-        return False
+        _ = href
+        return bool(self.events_by_calendar.get(calendar_id, {}).pop(uid, None))
+
+    def delete_event_with_etag(self, calendar_id: str, uid: str, expected_etag: str = "", href: str = "") -> bool:
+        _ = expected_etag
+        return self.delete_event(calendar_id, uid, href=href)
 
     def get_event_by_uid(self, calendar_id: str, uid: str) -> EventRecord | None:
         event = self.events_by_calendar.get(calendar_id, {}).get(uid)
@@ -95,21 +115,14 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
                     "username": "tester",
                     "password": "pw",
                 },
-                "ai": {"api_key": ""},
+                "ai": {"enabled": False},
                 "calendar_rules": {
-                    "staging_calendar_id": _FakeCalDAVService.staging_calendar_id,
-                    "staging_calendar_name": "Avocado AI Staging",
+                    "stack_calendar_id": _FakeCalDAVService.stack_calendar_id,
+                    "stack_calendar_name": "Avocado Stack Calendar",
                     "user_calendar_id": _FakeCalDAVService.user_calendar_id,
                     "user_calendar_name": "Avocado User Calendar",
-                    "intake_calendar_id": _FakeCalDAVService.intake_calendar_id,
-                    "intake_calendar_name": "Avocado New Events",
-                    "immutable_calendar_ids": [],
-                    "per_calendar_defaults": {
-                        _FakeCalDAVService.source_calendar_id: {
-                            "mode": "editable",
-                            "locked": False,
-                        }
-                    },
+                    "new_calendar_id": _FakeCalDAVService.new_calendar_id,
+                    "new_calendar_name": "Avocado New Calendar",
                 },
             }
         )
@@ -118,10 +131,9 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_sync_keeps_source_description_and_adds_ai_block_only_to_user_layer(self) -> None:
+    def test_sync_keeps_source_calendar_unchanged_and_writes_x_fields(self) -> None:
         fake_service = _FakeCalDAVService(object())
         source_uid = "source-uid"
-        user_uid = _staging_uid(_FakeCalDAVService.source_calendar_id, source_uid)
 
         with mock.patch("avocado.sync_engine.CalDAVService", return_value=fake_service):
             result = self.engine.run_once(trigger="manual")
@@ -133,12 +145,14 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
 
         source_event_after = fake_service.events_by_calendar[_FakeCalDAVService.source_calendar_id][source_uid]
         self.assertEqual(source_event_after.description, "Original source description")
-        self.assertNotIn("[AI Task]", source_event_after.description)
 
-        user_event = fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id][user_uid]
-        self.assertIn("[AI Task]", user_event.description)
-        self.assertIn("locked:", user_event.description)
-        self.assertNotIn("mandatory:", user_event.description)
+        stack_events = list(fake_service.events_by_calendar[_FakeCalDAVService.stack_calendar_id].values())
+        user_events = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())
+        self.assertGreaterEqual(len(stack_events), 1)
+        self.assertGreaterEqual(len(user_events), 1)
+        self.assertTrue(stack_events[0].x_sync_id)
+        self.assertTrue(user_events[0].x_sync_id)
+        self.assertEqual(stack_events[0].x_source, user_events[0].x_source)
 
 
 if __name__ == "__main__":

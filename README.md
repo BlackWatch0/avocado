@@ -8,7 +8,7 @@ Project source-of-truth document (requirements, change history, TODO board):
 ## Project Overview
 
 Avocado is a CalDAV-oriented AI scheduling service that can:
-- discover calendars and classify immutable vs editable events
+- discover calendars and orchestrate `user / stack / new` collaboration
 - manage a structured `[AI Task]` block in event `DESCRIPTION`
 - call an OpenAI-compatible API to generate scheduling changes
 - expose an intranet admin API for config, sync trigger, and audit
@@ -120,15 +120,11 @@ Admin page behavior:
 - secrets are masked by default
 - leave `CalDAV password` or `AI API key` empty to keep existing values
 - click `Run Sync` then calendar list is refreshed from CalDAV
-- scheduler compares user-layer calendars (non-stage) with stage calendar to detect deltas and trigger re-planning
 - system ensures three managed calendars exist:
-  - `stage` calendar (AI baseline)
-  - `user-layer` calendar (final user-visible schedule)
-  - `intake` calendar (user drops new events here before next sync)
-- on each sync, new events in `intake` are imported into `user-layer`, then removed from `intake`
-- per-calendar default behavior can be configured in UI:
-  - immutable/editable
-  - default locked
+  - `stack` calendar (window target truth set)
+  - `user` calendar (user-facing schedule layer)
+  - `new` calendar (inbox queue for newly created events)
+- on each sync, new events in `new` are merged into target set and then removed from `new`
 - AI Base URL defaults to `https://api.openai.com/v1`
 - API connectivity test is available as a blue inline link directly below AI Base URL
 - after connectivity test, available models are loaded into Model dropdown
@@ -161,7 +157,7 @@ Admin page behavior:
 
 ### Real E2E Sync Suite (writes test events, triggers sync, keeps logs)
 
-- Run full suite (config read/write, fixed-schedule protection, AI move instruction, immutable mirror check):
+- Run full suite (config read/write, fixed-schedule protection, AI move instruction):
   - `python -m avocado.e2e_sync_suite`
 - Optional custom window:
   - `python -m avocado.e2e_sync_suite --start 2026-03-01T00:00:00+00:00 --end 2026-03-08T23:59:59+00:00`
@@ -169,14 +165,14 @@ Admin page behavior:
   - saved under `data/test_logs/e2e_sync_suite_<timestamp>.log`
   - script also prints JSON summary to stdout
 
-### User Case Runner (UTF-8 Chinese cases, validates stage/user/intake)
+### User Case Runner (UTF-8 Chinese cases, validates stack/user/new)
 
 - Run with default fixture:
   - `python -m avocado.user_case_runner`
 - Run with a custom case file:
   - `python -m avocado.user_case_runner --cases tests/fixtures/user_cases_zh.json`
 - What it validates for each case:
-  - behavior expectation (move earlier / locked unchanged / description-only / intake import)
-  - calendar assertions: event exists in `user` + `stage`, raw uid removed from `intake`
+  - behavior expectation (move earlier / locked unchanged / description-only / new import)
+  - calendar assertions: event exists in `user` + `stack`, raw uid removed from `new`
 - Logs:
   - saved under `data/test_logs/user_cases_<timestamp>.json`

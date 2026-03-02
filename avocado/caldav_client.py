@@ -15,6 +15,10 @@ try:
 except ImportError:  # pragma: no cover - dependency managed by requirements
     caldav = None
 
+X_AVO_SYNC_ID = "X-AVO-SYNC-ID"
+X_AVO_SOURCE = "X-AVO-SOURCE"
+X_AVO_SOURCE_UID = "X-AVO-SOURCE-UID"
+
 
 def _data_hash(raw_ical: str) -> str:
     return hashlib.sha1(raw_ical.encode("utf-8")).hexdigest()  # nosec B324
@@ -66,6 +70,21 @@ def _extract_uid_from_raw_ical(raw_data: Any) -> str:
         return ""
 
 
+def _extract_etag(resource: Any, raw_ical: str) -> str:
+    candidate = str(getattr(resource, "etag", "") or "").strip()
+    if candidate:
+        return candidate
+    props = getattr(resource, "props", {}) or {}
+    if isinstance(props, dict):
+        for key in ("{DAV:}getetag", "getetag"):
+            value = props.get(key)
+            if value is not None:
+                text = str(value).strip()
+                if text:
+                    return text
+    return _data_hash(raw_ical)
+
+
 class CalDAVService:
     def __init__(self, config: CalDAVConfig) -> None:
         self.config = config
@@ -101,20 +120,6 @@ class CalDAVService:
             calendars.append(CalendarInfo(calendar_id=calendar_id, name=name, url=calendar_id))
         return calendars
 
-    @staticmethod
-    def suggest_immutable_calendar_ids(
-        calendars: list[CalendarInfo], keywords: list[str]
-    ) -> set[str]:
-        normalized_keywords = [x.strip().lower() for x in keywords if x.strip()]
-        if not normalized_keywords:
-            return set()
-        suggested: set[str] = set()
-        for cal in calendars:
-            name_lower = cal.name.lower()
-            if any(keyword in name_lower for keyword in normalized_keywords):
-                suggested.add(cal.calendar_id)
-        return suggested
-
     def _get_calendar(self, calendar_id: str) -> Any:
         if calendar_id in self._calendar_cache:
             return self._calendar_cache[calendar_id]
@@ -125,24 +130,24 @@ class CalDAVService:
             raise RuntimeError(f"Calendar not found: {calendar_id}")
         return self._calendar_cache[calendar_id]
 
-    def ensure_staging_calendar(self, staging_id: str, staging_name: str) -> CalendarInfo:
+    def ensure_managed_calendar(self, calendar_id: str, calendar_name: str) -> CalendarInfo:
         self._connect()
         calendars = self.list_calendars()
-        staging_id_norm = _normalize_calendar_id(staging_id)
-        if staging_id_norm:
+        calendar_id_norm = _normalize_calendar_id(calendar_id)
+        if calendar_id_norm:
             for info in calendars:
-                if _normalize_calendar_id(info.calendar_id) == staging_id_norm:
+                if _normalize_calendar_id(info.calendar_id) == calendar_id_norm:
                     return info
-        staging_name_norm = _normalize_calendar_name(staging_name)
-        if staging_name_norm:
+        calendar_name_norm = _normalize_calendar_name(calendar_name)
+        if calendar_name_norm:
             same_name = [
-                info for info in calendars if _normalize_calendar_name(info.name) == staging_name_norm
+                info for info in calendars if _normalize_calendar_name(info.name) == calendar_name_norm
             ]
             if same_name:
                 same_name.sort(key=lambda item: item.calendar_id)
                 return same_name[0]
 
-        calendar = self._principal.make_calendar(name=staging_name)
+        calendar = self._principal.make_calendar(name=calendar_name)
         created_id = str(calendar.url)
         self._calendar_cache[created_id] = calendar
 
@@ -152,7 +157,7 @@ class CalDAVService:
             if _normalize_calendar_id(info.calendar_id) == created_norm:
                 return info
 
-        fallback_name_norm = _normalize_calendar_name(staging_name)
+        fallback_name_norm = _normalize_calendar_name(calendar_name)
         if fallback_name_norm:
             same_name = [
                 info for info in refreshed if _normalize_calendar_name(info.name) == fallback_name_norm
@@ -163,7 +168,7 @@ class CalDAVService:
 
         return CalendarInfo(
             calendar_id=created_id,
-            name=getattr(calendar, "name", staging_name) or staging_name,
+            name=getattr(calendar, "name", calendar_name) or calendar_name,
             url=created_id,
         )
 
@@ -205,6 +210,9 @@ class CalDAVService:
             end = start + timedelta(hours=1)
         href = str(getattr(resource, "url", "") or "")
         etag = _data_hash(raw_ical)
+        x_sync_id = str(vevent.get(X_AVO_SYNC_ID, "")).strip()
+        x_source = str(vevent.get(X_AVO_SOURCE, "")).strip()
+        x_source_uid = str(vevent.get(X_AVO_SOURCE_UID, "")).strip()
         return EventRecord(
             calendar_id=calendar_id,
             uid=uid,
@@ -215,7 +223,10 @@ class CalDAVService:
             end=end,
             all_day=all_day,
             href=href,
-            etag=etag,
+            etag=_extract_etag(resource, raw_ical) or etag,
+            x_sync_id=x_sync_id,
+            x_source=x_source,
+            x_source_uid=x_source_uid,
         )
 
     def _build_ical(self, event: EventRecord) -> str:
@@ -228,6 +239,12 @@ class CalDAVService:
         vevent.add("DESCRIPTION", event.description or "")
         if event.location:
             vevent.add("LOCATION", event.location)
+        if event.x_sync_id:
+            vevent.add(X_AVO_SYNC_ID, event.x_sync_id)
+        if event.x_source:
+            vevent.add(X_AVO_SOURCE, event.x_source)
+        if event.x_source_uid:
+            vevent.add(X_AVO_SOURCE_UID, event.x_source_uid)
         if event.start is not None:
             vevent.add("DTSTART", event.start)
         if event.end is not None:
@@ -235,9 +252,19 @@ class CalDAVService:
         calendar_obj.add_component(vevent)
         return calendar_obj.to_ical().decode("utf-8")
 
-    def upsert_event(self, calendar_id: str, event: EventRecord) -> EventRecord:
+    def upsert_event(
+        self,
+        calendar_id: str,
+        event: EventRecord,
+        *,
+        expected_etag: str = "",
+    ) -> EventRecord:
         self._connect()
         calendar = self._get_calendar(calendar_id)
+        if expected_etag:
+            latest = self.get_event_by_uid(calendar_id, event.uid)
+            if latest is not None and latest.etag and latest.etag != expected_etag:
+                raise RuntimeError("etag_conflict")
         raw_ical = self._build_ical(event)
 
         updated_resource = None
@@ -285,6 +312,9 @@ class CalDAVService:
         parsed = self._parse_resource(calendar_id, updated_resource)
         parsed.source = event.source
         parsed.locked = event.locked
+        parsed.x_sync_id = event.x_sync_id
+        parsed.x_source = event.x_source
+        parsed.x_source_uid = event.x_source_uid
         parsed.original_calendar_id = event.original_calendar_id
         parsed.original_uid = event.original_uid
         return parsed
@@ -349,6 +379,13 @@ class CalDAVService:
         except Exception:
             return False
 
+    def delete_event_with_etag(self, calendar_id: str, uid: str, expected_etag: str, href: str = "") -> bool:
+        if expected_etag:
+            existing = self.get_event_by_uid(calendar_id, uid)
+            if existing is not None and existing.etag and existing.etag != expected_etag:
+                raise RuntimeError("etag_conflict")
+        return self.delete_event(calendar_id, uid=uid, href=href)
+
     def get_event_by_uid(self, calendar_id: str, uid: str) -> EventRecord | None:
         self._connect()
         calendar = self._get_calendar(calendar_id)
@@ -356,3 +393,62 @@ class CalDAVService:
         if resource is None:
             return None
         return self._parse_resource(calendar_id, resource)
+
+    def list_window_index(self, calendar_id: str, start: datetime, end: datetime) -> list[dict[str, str]]:
+        self._connect()
+        calendar = self._get_calendar(calendar_id)
+        resources = calendar.date_search(start=start, end=end, expand=True)
+        output: list[dict[str, str]] = []
+        for resource in resources:
+            href = str(getattr(resource, "url", "") or "")
+            raw_data = getattr(resource, "data", "")
+            raw_ical = _decode_raw_ical(raw_data)
+            uid = _extract_uid_from_raw_ical(raw_ical)
+            etag = _extract_etag(resource, raw_ical)
+            if not uid:
+                continue
+            output.append({"uid": uid, "href": href, "etag": etag})
+        return output
+
+    def fetch_changes_by_token(
+        self, calendar_id: str, sync_token: str | None
+    ) -> dict[str, Any]:
+        self._connect()
+        calendar = self._get_calendar(calendar_id)
+        try:
+            updates = calendar.objects_by_sync_token(sync_token=sync_token, load_objects=False)
+        except Exception as exc:
+            return {
+                "supported": False,
+                "add_update": [],
+                "delete": [],
+                "next_token": sync_token or "",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+        next_token = str(getattr(updates, "sync_token", "") or sync_token or "")
+        add_update: list[EventRecord] = []
+        deleted: list[dict[str, str]] = []
+        for obj in updates:
+            href = str(getattr(obj, "url", "") or "")
+            uid = ""
+            raw_data = getattr(obj, "data", "")
+            if raw_data:
+                uid = _extract_uid_from_raw_ical(raw_data)
+            try:
+                obj.load()
+                parsed = self._parse_resource(calendar_id, obj)
+                if parsed.uid:
+                    add_update.append(parsed)
+                elif uid:
+                    parsed.uid = uid
+                    add_update.append(parsed)
+            except Exception:
+                deleted.append({"uid": uid, "href": href})
+        return {
+            "supported": True,
+            "add_update": add_update,
+            "delete": deleted,
+            "next_token": next_token,
+            "error": "",
+        }

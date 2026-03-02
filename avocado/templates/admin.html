@@ -45,6 +45,7 @@
 
       <section class="card" data-panel="config">
         <h2 data-i18n="section.ai">AI</h2>
+        <label class="checkbox"><input id="ai-enabled" type="checkbox"> <span data-i18n="field.ai_enabled">AI Enabled</span></label>
         <label>
           <span data-i18n="field.base_url">Base URL</span>
           <input id="ai-base-url" type="text" required>
@@ -66,6 +67,7 @@
         <h2 data-i18n="section.sync">Sync</h2>
         <label><span data-i18n="field.window_days">Window Days</span><input id="sync-window-days" type="number" min="1" required></label>
         <label><span data-i18n="field.interval_seconds">Interval Seconds</span><input id="sync-interval-seconds" type="number" min="30" required></label>
+        <label><span data-i18n="field.freeze_hours">Freeze Hours</span><input id="sync-freeze-hours" type="number" min="0" required></label>
         <label><span data-i18n="field.timezone">Timezone</span>
           <select id="sync-timezone" required>
             <option value="UTC">UTC</option>
@@ -97,14 +99,12 @@
 
       <section class="card" data-panel="config">
         <h2 data-i18n="section.calendar_rules">Calendar Rules</h2>
-        <label><span data-i18n="field.immutable_keywords">Immutable Keywords (comma separated)</span><input id="rules-immutable-keywords" type="text"></label>
-        <label><span data-i18n="field.immutable_calendar_ids">Immutable Calendar IDs (auto-filled from calendar table)</span><textarea id="rules-immutable-calendar-ids" rows="4" readonly></textarea></label>
-        <label><span data-i18n="field.staging_calendar_id">Staging Calendar ID</span><input id="rules-staging-calendar-id" type="text"></label>
-        <label><span data-i18n="field.staging_calendar_name">Staging Calendar Name</span><input id="rules-staging-calendar-name" type="text"></label>
+        <label><span data-i18n="field.stack_calendar_id">Stack Calendar ID</span><input id="rules-stack-calendar-id" type="text"></label>
+        <label><span data-i18n="field.stack_calendar_name">Stack Calendar Name</span><input id="rules-stack-calendar-name" type="text"></label>
         <label><span data-i18n="field.user_calendar_id">User Calendar ID</span><input id="rules-user-calendar-id" type="text"></label>
         <label><span data-i18n="field.user_calendar_name">User Calendar Name</span><input id="rules-user-calendar-name" type="text"></label>
-        <label><span data-i18n="field.intake_calendar_id">Intake Calendar ID</span><input id="rules-intake-calendar-id" type="text"></label>
-        <label><span data-i18n="field.intake_calendar_name">Intake Calendar Name</span><input id="rules-intake-calendar-name" type="text"></label>
+        <label><span data-i18n="field.new_calendar_id">New Calendar ID</span><input id="rules-new-calendar-id" type="text"></label>
+        <label><span data-i18n="field.new_calendar_name">New Calendar Name</span><input id="rules-new-calendar-name" type="text"></label>
       </section>
 
       <section class="card" data-panel="config">
@@ -121,8 +121,7 @@
             <thead>
               <tr>
                 <th data-i18n="table.name">Name</th>
-                <th data-i18n="table.immutable">Immutable</th>
-                <th data-i18n="table.default_locked">Default Locked</th>
+                <th data-i18n="table.role">Role</th>
               </tr>
             </thead>
             <tbody id="calendar-behaviors-body"></tbody>

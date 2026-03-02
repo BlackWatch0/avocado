@@ -15,7 +15,7 @@ from avocado.caldav_client import CalDAVService
 from avocado.config_manager import ConfigManager
 from avocado.models import EventRecord, TaskDefaultsConfig, parse_iso_datetime, serialize_datetime
 from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine, _staging_uid
+from avocado.sync_engine import SyncEngine
 from avocado.task_block import ensure_ai_task_block, parse_ai_task_block, upsert_ai_task_block
 
 
@@ -178,28 +178,34 @@ def main() -> int:
     # 2) connectivity checks
     try:
         calendars = service.list_calendars()
-        stage = service.ensure_staging_calendar(
-            config.calendar_rules.staging_calendar_id,
-            config.calendar_rules.staging_calendar_name,
+        stack = service.ensure_managed_calendar(
+            config.calendar_rules.stack_calendar_id,
+            config.calendar_rules.stack_calendar_name,
         )
-        user = service.ensure_staging_calendar(
+        user = service.ensure_managed_calendar(
             config.calendar_rules.user_calendar_id,
             config.calendar_rules.user_calendar_name,
         )
-        intake = service.ensure_staging_calendar(
-            config.calendar_rules.intake_calendar_id,
-            config.calendar_rules.intake_calendar_name,
+        new_calendar = service.ensure_managed_calendar(
+            config.calendar_rules.new_calendar_id,
+            config.calendar_rules.new_calendar_name,
         )
-        logger.info("caldav calendars=%s stage=%s user=%s intake=%s", len(calendars), stage.calendar_id, user.calendar_id, intake.calendar_id)
+        logger.info(
+            "caldav calendars=%s stack=%s user=%s new=%s",
+            len(calendars),
+            stack.calendar_id,
+            user.calendar_id,
+            new_calendar.calendar_id,
+        )
         results.append(
             CaseResult(
                 name="caldav_connectivity",
                 passed=True,
                 details={
                     "calendar_count": len(calendars),
-                    "stage": stage.calendar_id,
+                    "stack": stack.calendar_id,
                     "user": user.calendar_id,
-                    "intake": intake.calendar_id,
+                    "new": new_calendar.calendar_id,
                 },
             )
         )
@@ -289,29 +295,7 @@ def main() -> int:
         fixed_uid,
     )
 
-    # 4) select an immutable source event candidate for mirror validation
-    immutable_candidate: EventRecord | None = None
-    immutable_source_calendar_id = ""
-    all_calendar_ids = {item.calendar_id for item in service.list_calendars()}
-    immutable_ids = [
-        cid for cid in (config.calendar_rules.immutable_calendar_ids or []) if cid in all_calendar_ids
-    ]
-    for immutable_id in immutable_ids:
-        try:
-            events = service.fetch_events(immutable_id, window_start, window_end)
-        except Exception as exc:
-            logger.warning("fetch immutable calendar failed id=%s err=%s", immutable_id, exc)
-            continue
-        if events:
-            immutable_candidate = events[0]
-            immutable_source_calendar_id = immutable_id
-            break
-    if immutable_candidate is None:
-        logger.warning(
-            "no immutable candidate found in window; fixed-source mirror test will be skipped (not failed)"
-        )
-
-    # 5) run sync
+    # 4) run sync
     sync_result = engine.run_once(
         trigger="manual-window",
         window_start_override=window_start,
@@ -328,7 +312,7 @@ def main() -> int:
     run_events = store.recent_audit_events(limit=1000, run_id=run_id) if run_id else []
     logger.info("sync run_id=%s audit_events=%s", run_id, len(run_events))
 
-    # 6) validate cases
+    # 5) validate cases
     move_after = _find_case_event(service, user.calendar_id, move_uid)
     fixed_after = _find_case_event(service, user.calendar_id, fixed_uid)
 
@@ -377,53 +361,18 @@ def main() -> int:
         )
     )
 
-    if immutable_candidate is not None:
-        mapped_uid = _staging_uid(immutable_source_calendar_id, immutable_candidate.uid)
-        immutable_mirror = _find_case_event(service, user.calendar_id, mapped_uid)
-        mirror_ok = (
-            immutable_mirror is not None
-            and immutable_mirror.locked
-            and immutable_mirror.start == immutable_candidate.start
-            and immutable_mirror.end == immutable_candidate.end
-        )
-        results.append(
-            CaseResult(
-                name="immutable_source_mirrored_to_user_layer",
-                passed=bool(mirror_ok),
-                details={
-                    "source_calendar_id": immutable_source_calendar_id,
-                    "source_uid": immutable_candidate.uid,
-                    "mapped_uid": mapped_uid,
-                    "source_start": serialize_datetime(immutable_candidate.start),
-                    "mirror_start": serialize_datetime(immutable_mirror.start if immutable_mirror else None),
-                    "mirror_locked": bool(immutable_mirror.locked) if immutable_mirror else False,
-                },
-            )
-        )
-    else:
-        results.append(
-            CaseResult(
-                name="immutable_source_mirrored_to_user_layer",
-                passed=True,
-                details={
-                    "skipped": True,
-                    "reason": "no immutable event found in test window for current tenant",
-                },
-            )
-        )
-
-    # 7) dump action stats for run
+    # 6) dump action stats for run
     action_counts: dict[str, int] = {}
     for item in run_events:
         action = str(item.get("action", ""))
         action_counts[action] = action_counts.get(action, 0) + 1
     logger.info("run action counts: %s", json.dumps(action_counts, ensure_ascii=False, sort_keys=True))
 
-    # 8) cleanup
-    stage_calendar_id = stage.calendar_id
+    # 7) cleanup
+    stack_calendar_id = stack.calendar_id
     for uid in created_user_uids:
         _delete_if_exists(service, user.calendar_id, uid, logger)
-        _delete_if_exists(service, stage_calendar_id, uid, logger)
+        _delete_if_exists(service, stack_calendar_id, uid, logger)
 
     all_passed = all(item.passed for item in results)
     summary = {

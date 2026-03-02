@@ -1,9 +1,10 @@
-caldav:
+﻿caldav:
   base_url: "https://your-caldav-server.example.com/dav"
   username: "your-username"
   password: "your-password"
 
 ai:
+  enabled: true
   base_url: "https://api.openai.com/v1"
   api_key: "sk-..."
   model: "gpt-4o-mini"
@@ -34,21 +35,16 @@ ai:
 sync:
   window_days: 7
   interval_seconds: 300
+  freeze_hours: 0
   timezone: "UTC"
 
 calendar_rules:
-  immutable_keywords:
-    - "fixed"
-    - "work"
-    - "固定"
-  immutable_calendar_ids: []
-  per_calendar_defaults: {}
-  staging_calendar_id: ""
-  staging_calendar_name: "Avocado AI Staging"
+  stack_calendar_id: ""
+  stack_calendar_name: "Avocado Stack Calendar"
   user_calendar_id: ""
   user_calendar_name: "Avocado User Calendar"
-  intake_calendar_id: ""
-  intake_calendar_name: "Avocado New Events"
+  new_calendar_id: ""
+  new_calendar_name: "Avocado New Calendar"
 
 task_defaults:
   locked: false

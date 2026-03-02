@@ -1,87 +1,145 @@
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import TestCase, mock
 
-from avocado.models import AppConfig, CalendarInfo, EventRecord
+from avocado.config_manager import ConfigManager
+from avocado.models import CalendarInfo, EventRecord
+from avocado.state_store import StateStore
 from avocado.sync_engine import SyncEngine
 
 
-class SyncEngineRunOnceTests(TestCase):
-    def test_immutable_events_do_not_trigger_upsert_writeback(self) -> None:
-        config = AppConfig.from_dict(
-            {
-                "caldav": {
-                    "base_url": "https://caldav.example.com",
-                    "username": "tester",
-                    "password": "secret",
-                },
-                "calendar_rules": {
-                    "staging_calendar_id": "stage-cal",
-                    "staging_calendar_name": "Avocado AI Staging",
-                    "user_calendar_id": "user-cal",
-                    "user_calendar_name": "Avocado User Calendar",
-                    "intake_calendar_id": "intake-cal",
-                    "intake_calendar_name": "Avocado New Events",
-                    "immutable_calendar_ids": ["immutable-cal"],
-                    "per_calendar_defaults": {
-                        "immutable-cal": {"mode": "immutable", "locked": True}
-                    },
-                },
-            }
-        )
+class _FakeCalDAVService:
+    source_calendar_id = "source-cal"
+    stack_calendar_id = "stack-cal"
+    user_calendar_id = "user-cal"
+    new_calendar_id = "new-cal"
 
-        config_manager = mock.Mock()
-        config_manager.load.return_value = config
+    def __init__(self, _config) -> None:
+        now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        self.events_by_calendar = {
+            self.source_calendar_id: {
+                "source-uid": EventRecord(
+                    calendar_id=self.source_calendar_id,
+                    uid="source-uid",
+                    summary="Source Event",
+                    description="Original source description",
+                    start=now + timedelta(hours=2),
+                    end=now + timedelta(hours=3),
+                    etag="src-etag",
+                )
+            },
+            self.stack_calendar_id: {},
+            self.user_calendar_id: {},
+            self.new_calendar_id: {},
+        }
+        self.upsert_calls: list[tuple[str, EventRecord]] = []
 
-        state_store = mock.Mock()
-        state_store.start_sync_run.return_value = 1
-        state_store.finish_sync_run.return_value = None
-        state_store.get_meta.return_value = None
-
-        source_event = EventRecord(
-            calendar_id="immutable-cal",
-            uid="immutable-uid-1",
-            summary="Immutable Event",
-            description="Source event without AI metadata",
-            start=datetime.now(timezone.utc),
-            end=datetime.now(timezone.utc) + timedelta(hours=1),
-            etag="etag-1",
-        )
-
-        calendars = [
-            CalendarInfo(calendar_id="immutable-cal", name="Work", url="https://example/immutable"),
-            CalendarInfo(calendar_id="stage-cal", name="Avocado AI Staging", url="https://example/stage"),
-            CalendarInfo(calendar_id="user-cal", name="Avocado User Calendar", url="https://example/user"),
-            CalendarInfo(calendar_id="intake-cal", name="Avocado New Events", url="https://example/intake"),
+    def list_calendars(self) -> list[CalendarInfo]:
+        return [
+            CalendarInfo(calendar_id=self.source_calendar_id, name="Personal", url=self.source_calendar_id),
+            CalendarInfo(calendar_id=self.stack_calendar_id, name="Avocado Stack Calendar", url=self.stack_calendar_id),
+            CalendarInfo(calendar_id=self.user_calendar_id, name="Avocado User Calendar", url=self.user_calendar_id),
+            CalendarInfo(calendar_id=self.new_calendar_id, name="Avocado New Calendar", url=self.new_calendar_id),
         ]
 
-        caldav_service = mock.Mock()
-        caldav_service.list_calendars.return_value = calendars
-        caldav_service.suggest_immutable_calendar_ids.return_value = set()
-        caldav_service.upsert_event.side_effect = (
-            lambda calendar_id, event: event.with_updates(calendar_id=calendar_id, etag=f"etag-{calendar_id}")
-        )
+    def ensure_managed_calendar(self, calendar_id: str, calendar_name: str) -> CalendarInfo:
+        cid = calendar_id
+        if not cid:
+            mapping = {
+                "Avocado Stack Calendar": self.stack_calendar_id,
+                "Avocado User Calendar": self.user_calendar_id,
+                "Avocado New Calendar": self.new_calendar_id,
+            }
+            cid = mapping[calendar_name]
+        return CalendarInfo(calendar_id=cid, name=calendar_name, url=cid)
 
-        def ensure_staging_calendar(calendar_id: str, calendar_name: str) -> CalendarInfo:
-            return CalendarInfo(calendar_id=calendar_id, name=calendar_name, url=f"https://example/{calendar_id}")
+    def fetch_changes_by_token(self, calendar_id: str, _token: str) -> dict:
+        return {
+            "supported": True,
+            "add_update": [],
+            "delete": [],
+            "next_token": f"next-{calendar_id}",
+        }
 
-        caldav_service.ensure_staging_calendar.side_effect = ensure_staging_calendar
+    def list_window_index(self, calendar_id: str, _start: datetime, _end: datetime) -> list[dict]:
+        return [
+            {
+                "uid": event.uid,
+                "href": event.href or f"{calendar_id}/{event.uid}.ics",
+                "etag": event.etag,
+            }
+            for event in self.events_by_calendar.get(calendar_id, {}).values()
+        ]
 
-        def fetch_events(calendar_id: str, _window_start: datetime, _window_end: datetime) -> list[EventRecord]:
-            if calendar_id == "immutable-cal":
-                return [source_event]
-            return []
+    def fetch_events(self, calendar_id: str, _start: datetime, _end: datetime) -> list[EventRecord]:
+        return [item.clone() for item in self.events_by_calendar.get(calendar_id, {}).values()]
 
-        caldav_service.fetch_events.side_effect = fetch_events
+    def upsert_event(self, calendar_id: str, event: EventRecord, expected_etag: str = "") -> EventRecord:
+        current = self.events_by_calendar.setdefault(calendar_id, {}).get(event.uid)
+        if expected_etag and current is not None and current.etag and current.etag != expected_etag:
+            raise RuntimeError("etag_conflict")
+        saved = event.clone()
+        saved.calendar_id = calendar_id
+        saved.etag = f"etag-{calendar_id}-{saved.uid}"
+        saved.href = saved.href or f"{calendar_id}/{saved.uid}.ics"
+        self.events_by_calendar.setdefault(calendar_id, {})[saved.uid] = saved
+        self.upsert_calls.append((calendar_id, saved.clone()))
+        return saved
 
-        with mock.patch("avocado.sync_engine.CalDAVService", return_value=caldav_service):
-            engine = SyncEngine(config_manager, state_store)
-            result = engine.run_once(trigger="manual")
+    def delete_event(self, calendar_id: str, uid: str, href: str = "") -> bool:
+        _ = href
+        return bool(self.events_by_calendar.get(calendar_id, {}).pop(uid, None))
 
-        self.assertEqual(result.status, "success")
-        source_upserts = [call for call in caldav_service.upsert_event.call_args_list if call.args and call.args[0] == "immutable-cal"]
-        self.assertEqual(source_upserts, [])
-        user_upserts = [call for call in caldav_service.upsert_event.call_args_list if call.args and call.args[0] == "user-cal"]
-        self.assertGreaterEqual(len(user_upserts), 1)
+    def delete_event_with_etag(self, calendar_id: str, uid: str, expected_etag: str = "", href: str = "") -> bool:
+        _ = expected_etag
+        return self.delete_event(calendar_id, uid, href=href)
+
+    def get_event_by_uid(self, calendar_id: str, uid: str) -> EventRecord | None:
+        event = self.events_by_calendar.get(calendar_id, {}).get(uid)
+        return event.clone() if event is not None else None
+
+
+class SyncEngineRunOnceTests(TestCase):
+    def test_external_source_event_syncs_to_stack_and_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            manager = ConfigManager(root / "config.yaml")
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://caldav.example.com",
+                        "username": "tester",
+                        "password": "secret",
+                    },
+                    "ai": {"enabled": False},
+                    "calendar_rules": {
+                        "stack_calendar_id": _FakeCalDAVService.stack_calendar_id,
+                        "stack_calendar_name": "Avocado Stack Calendar",
+                        "user_calendar_id": _FakeCalDAVService.user_calendar_id,
+                        "user_calendar_name": "Avocado User Calendar",
+                        "new_calendar_id": _FakeCalDAVService.new_calendar_id,
+                        "new_calendar_name": "Avocado New Calendar",
+                    },
+                }
+            )
+            state_store = StateStore(str(root / "state.db"))
+            fake_service = _FakeCalDAVService(object())
+
+            with mock.patch("avocado.sync_engine.CalDAVService", return_value=fake_service):
+                engine = SyncEngine(manager, state_store)
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertGreaterEqual(result.changes_applied, 2)
+
+            source_upserts = [call for call in fake_service.upsert_calls if call[0] == _FakeCalDAVService.source_calendar_id]
+            self.assertEqual(source_upserts, [])
+
+            stack_upserts = [call for call in fake_service.upsert_calls if call[0] == _FakeCalDAVService.stack_calendar_id]
+            user_upserts = [call for call in fake_service.upsert_calls if call[0] == _FakeCalDAVService.user_calendar_id]
+            self.assertGreaterEqual(len(stack_upserts), 1)
+            self.assertGreaterEqual(len(user_upserts), 1)
 
 
 if __name__ == "__main__":

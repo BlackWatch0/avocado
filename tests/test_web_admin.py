@@ -26,12 +26,12 @@ class WebAdminTests(unittest.TestCase):
             "ai": {"base_url": "https://api.example.com/v1", "api_key": "secret-key", "model": "gpt-4o-mini"},
             "sync": {"window_days": 7, "interval_seconds": 300, "timezone": "UTC"},
             "calendar_rules": {
-                "immutable_keywords": ["fixed"],
-                "immutable_calendar_ids": ["cal-1"],
-                "staging_calendar_id": "stage-id",
-                "staging_calendar_name": "stage",
-                "intake_calendar_id": "intake-id",
-                "intake_calendar_name": "intake",
+                "stack_calendar_id": "stack-id",
+                "stack_calendar_name": "stack",
+                "user_calendar_id": "user-id",
+                "user_calendar_name": "user",
+                "new_calendar_id": "new-id",
+                "new_calendar_name": "new",
             },
             "task_defaults": {"locked": False, "editable_fields": ["start", "end"]},
         }
@@ -84,47 +84,34 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(config["sync"]["interval_seconds"], 600)
         self.assertEqual(config["sync"]["window_days"], 7)
 
-    def test_put_config_per_calendar_defaults_persist(self) -> None:
+    def test_put_config_calendar_rules_persist(self) -> None:
         update = {
             "calendar_rules": {
-                "per_calendar_defaults": {
-                    "cal-1": {"mode": "immutable", "locked": True},
-                    "cal-2": {"mode": "editable", "locked": False},
-                }
+                "stack_calendar_id": "stack-2",
+                "new_calendar_id": "new-2",
             }
         }
         resp = self.client.put("/api/config", json={"payload": update})
         self.assertEqual(resp.status_code, 200)
         rules = resp.json()["config"]["calendar_rules"]
-        self.assertIn("cal-1", rules["per_calendar_defaults"])
-        self.assertEqual(rules["per_calendar_defaults"]["cal-1"]["mode"], "immutable")
-        self.assertTrue(rules["per_calendar_defaults"]["cal-1"]["locked"])
+        self.assertEqual(rules["stack_calendar_id"], "stack-2")
+        self.assertEqual(rules["new_calendar_id"], "new-2")
 
-    def test_put_calendar_rules_filters_reserved_calendars(self) -> None:
+    def test_put_calendar_rules_updates_roles(self) -> None:
         payload = {
-            "immutable_keywords": ["fixed"],
-            "immutable_calendar_ids": ["stage-id", "user-id", "intake-id", "cal-3"],
-            "staging_calendar_id": "stage-id",
-            "staging_calendar_name": "stage",
+            "stack_calendar_id": "stack-id",
+            "stack_calendar_name": "stack",
             "user_calendar_id": "user-id",
             "user_calendar_name": "user",
-            "intake_calendar_id": "intake-id",
-            "intake_calendar_name": "intake",
-            "per_calendar_defaults": {
-                "stage-id": {"mode": "immutable", "locked": True},
-                "user-id": {"mode": "immutable", "locked": True},
-                "intake-id": {"mode": "immutable", "locked": True},
-                "cal-3": {"mode": "immutable", "locked": True},
-            },
+            "new_calendar_id": "new-id",
+            "new_calendar_name": "new",
         }
         resp = self.client.put("/api/calendar-rules", json=payload)
         self.assertEqual(resp.status_code, 200)
         rules = resp.json()["calendar_rules"]
-        self.assertEqual(rules["immutable_calendar_ids"], ["cal-3"])
-        self.assertNotIn("stage-id", rules["per_calendar_defaults"])
-        self.assertNotIn("user-id", rules["per_calendar_defaults"])
-        self.assertNotIn("intake-id", rules["per_calendar_defaults"])
-        self.assertIn("cal-3", rules["per_calendar_defaults"])
+        self.assertEqual(rules["stack_calendar_id"], "stack-id")
+        self.assertEqual(rules["user_calendar_id"], "user-id")
+        self.assertEqual(rules["new_calendar_id"], "new-id")
 
     def test_ai_connectivity_api(self) -> None:
         with mock.patch(
@@ -144,12 +131,12 @@ class WebAdminTests(unittest.TestCase):
     def test_calendars_marks_managed_duplicates(self) -> None:
         update = {
             "calendar_rules": {
-                "staging_calendar_id": "stage-id",
-                "staging_calendar_name": "Avocado AI Staging",
+                "stack_calendar_id": "stack-id",
+                "stack_calendar_name": "Avocado Stack Calendar",
                 "user_calendar_id": "user-id",
                 "user_calendar_name": "Avocado User Calendar",
-                "intake_calendar_id": "intake-id",
-                "intake_calendar_name": "Avocado New Events",
+                "new_calendar_id": "new-id",
+                "new_calendar_name": "Avocado New Calendar",
             }
         }
         resp = self.client.put("/api/config", json={"payload": update})
@@ -159,7 +146,7 @@ class WebAdminTests(unittest.TestCase):
             def __init__(self, _config: object) -> None:
                 pass
 
-            def ensure_staging_calendar(self, calendar_id: str, calendar_name: str) -> object:
+            def ensure_managed_calendar(self, calendar_id: str, calendar_name: str) -> object:
                 return type(
                     "CalendarInfoObj",
                     (),
@@ -195,16 +182,14 @@ class WebAdminTests(unittest.TestCase):
                     )()
 
                 return [
-                    _cal("stage-id", "Avocado AI Staging"),
+                    _cal("stack-id", "Avocado Stack Calendar"),
                     _cal("user-id", "Avocado User Calendar"),
-                    _cal("intake-id", "Avocado New Events"),
+                    _cal("new-id", "Avocado New Calendar"),
                     _cal("dup-user-id", "Avocado User Calendar"),
-                    _cal("dup-intake-id", "Avocado New Events"),
+                    _cal("dup-stack-id", "Avocado Stack Calendar"),
+                    _cal("dup-new-id", "Avocado New Calendar"),
                     _cal("normal-id", "Personal"),
                 ]
-
-            def suggest_immutable_calendar_ids(self, calendars: list[object], keywords: list[str]) -> set[str]:
-                return set()
 
         with mock.patch("avocado.web_admin.CalDAVService", _FakeService):
             resp = self.client.get("/api/calendars")
@@ -215,10 +200,14 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(len(duplicate_rows), 1)
         self.assertTrue(duplicate_rows[0]["managed_duplicate"])
         self.assertEqual(duplicate_rows[0]["managed_duplicate_role"], "user")
-        duplicate_intake_rows = [x for x in rows if x["calendar_id"] == "dup-intake-id"]
-        self.assertEqual(len(duplicate_intake_rows), 1)
-        self.assertTrue(duplicate_intake_rows[0]["managed_duplicate"])
-        self.assertEqual(duplicate_intake_rows[0]["managed_duplicate_role"], "intake")
+        duplicate_stack_rows = [x for x in rows if x["calendar_id"] == "dup-stack-id"]
+        self.assertEqual(len(duplicate_stack_rows), 1)
+        self.assertTrue(duplicate_stack_rows[0]["managed_duplicate"])
+        self.assertEqual(duplicate_stack_rows[0]["managed_duplicate_role"], "stack")
+        duplicate_new_rows = [x for x in rows if x["calendar_id"] == "dup-new-id"]
+        self.assertEqual(len(duplicate_new_rows), 1)
+        self.assertTrue(duplicate_new_rows[0]["managed_duplicate"])
+        self.assertEqual(duplicate_new_rows[0]["managed_duplicate_role"], "new")
 
     def test_sync_run_window_calls_sync_engine(self) -> None:
         fake_result = SyncResult(

@@ -25,15 +25,12 @@ class ConfigUpdateRequest(BaseModel):
 
 
 class CalendarRulesUpdateRequest(BaseModel):
-    immutable_keywords: list[str] = Field(default_factory=list)
-    immutable_calendar_ids: list[str] = Field(default_factory=list)
-    staging_calendar_id: str = ""
-    staging_calendar_name: str | None = None
+    stack_calendar_id: str = ""
+    stack_calendar_name: str | None = None
     user_calendar_id: str = ""
     user_calendar_name: str | None = None
-    intake_calendar_id: str = ""
-    intake_calendar_name: str | None = None
-    per_calendar_defaults: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    new_calendar_id: str = ""
+    new_calendar_name: str | None = None
 
 
 class CustomWindowSyncRequest(BaseModel):
@@ -118,6 +115,9 @@ def _event_from_dict(payload: dict[str, Any]) -> EventRecord:
         href=str(payload.get("href", "") or ""),
         etag=str(payload.get("etag", "") or ""),
         source=str(payload.get("source", "user") or "user"),
+        x_sync_id=str(payload.get("x_sync_id", "") or ""),
+        x_source=str(payload.get("x_source", "") or ""),
+        x_source_uid=str(payload.get("x_source_uid", "") or ""),
         locked=bool(payload.get("locked", False)),
         original_calendar_id=str(payload.get("original_calendar_id", "") or ""),
         original_uid=str(payload.get("original_uid", "") or ""),
@@ -178,129 +178,72 @@ def create_app() -> FastAPI:
         service = CalDAVService(config.caldav)
         try:
             if config.caldav.base_url and config.caldav.username:
-                stage_info = service.ensure_staging_calendar(
-                    config.calendar_rules.staging_calendar_id,
-                    config.calendar_rules.staging_calendar_name,
+                stack_info = service.ensure_managed_calendar(
+                    config.calendar_rules.stack_calendar_id,
+                    config.calendar_rules.stack_calendar_name,
                 )
-                user_info = service.ensure_staging_calendar(
+                user_info = service.ensure_managed_calendar(
                     config.calendar_rules.user_calendar_id,
                     config.calendar_rules.user_calendar_name,
                 )
-                intake_info = service.ensure_staging_calendar(
-                    config.calendar_rules.intake_calendar_id,
-                    config.calendar_rules.intake_calendar_name,
+                new_info = service.ensure_managed_calendar(
+                    config.calendar_rules.new_calendar_id,
+                    config.calendar_rules.new_calendar_name,
                 )
                 updates: dict[str, Any] = {"calendar_rules": {}}
-                if config.calendar_rules.staging_calendar_id != stage_info.calendar_id:
-                    updates["calendar_rules"]["staging_calendar_id"] = stage_info.calendar_id
+                if config.calendar_rules.stack_calendar_id != stack_info.calendar_id:
+                    updates["calendar_rules"]["stack_calendar_id"] = stack_info.calendar_id
                 if config.calendar_rules.user_calendar_id != user_info.calendar_id:
                     updates["calendar_rules"]["user_calendar_id"] = user_info.calendar_id
-                if config.calendar_rules.intake_calendar_id != intake_info.calendar_id:
-                    updates["calendar_rules"]["intake_calendar_id"] = intake_info.calendar_id
+                if config.calendar_rules.new_calendar_id != new_info.calendar_id:
+                    updates["calendar_rules"]["new_calendar_id"] = new_info.calendar_id
                 if updates["calendar_rules"]:
                     app.state.context.config_manager.update(updates)
                     config = app.state.context.config_manager.load()
             calendars = service.list_calendars()
-            suggested = service.suggest_immutable_calendar_ids(
-                calendars, config.calendar_rules.immutable_keywords
-            )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         output = []
-        stage_name_key = _normalize_name(config.calendar_rules.staging_calendar_name)
+        stack_name_key = _normalize_name(config.calendar_rules.stack_calendar_name)
         user_name_key = _normalize_name(config.calendar_rules.user_calendar_name)
-        intake_name_key = _normalize_name(config.calendar_rules.intake_calendar_name)
-        per_calendar_defaults = config.calendar_rules.per_calendar_defaults
-        immutable_explicit = set(config.calendar_rules.immutable_calendar_ids)
-        editable_override = {
-            cid
-            for cid, behavior_entry in per_calendar_defaults.items()
-            if str(behavior_entry.get("mode", "editable")).lower() == "editable"
-        }
+        new_name_key = _normalize_name(config.calendar_rules.new_calendar_name)
         for cal in calendars:
             item = cal.to_dict()
-            behavior = per_calendar_defaults.get(cal.calendar_id, {})
-            mode = str(behavior.get("mode", "editable")).lower()
-            if mode not in {"editable", "immutable"}:
-                mode = "editable"
-
-            immutable_selected = cal.calendar_id in immutable_explicit or mode == "immutable"
-            if mode == "editable":
-                immutable_selected = cal.calendar_id in immutable_explicit and cal.calendar_id not in editable_override
-
-            item["immutable_suggested"] = cal.calendar_id in suggested
-            item["immutable_selected"] = immutable_selected
-            item["is_staging"] = cal.calendar_id == config.calendar_rules.staging_calendar_id
+            item["is_stack"] = cal.calendar_id == config.calendar_rules.stack_calendar_id
             item["is_user"] = cal.calendar_id == config.calendar_rules.user_calendar_id
-            item["is_intake"] = cal.calendar_id == config.calendar_rules.intake_calendar_id
+            item["is_new"] = cal.calendar_id == config.calendar_rules.new_calendar_id
             name_key = _normalize_name(cal.name)
             item["managed_duplicate"] = False
             item["managed_duplicate_role"] = ""
-            if not item["is_staging"] and not item["is_user"] and not item["is_intake"]:
-                if stage_name_key and name_key == stage_name_key:
+            if not item["is_stack"] and not item["is_user"] and not item["is_new"]:
+                if stack_name_key and name_key == stack_name_key:
                     item["managed_duplicate"] = True
-                    item["managed_duplicate_role"] = "staging"
+                    item["managed_duplicate_role"] = "stack"
                 elif user_name_key and name_key == user_name_key:
                     item["managed_duplicate"] = True
                     item["managed_duplicate_role"] = "user"
-                elif intake_name_key and name_key == intake_name_key:
+                elif new_name_key and name_key == new_name_key:
                     item["managed_duplicate"] = True
-                    item["managed_duplicate_role"] = "intake"
-            item["default_locked"] = bool(behavior.get("locked", config.task_defaults.locked))
-            item["mode"] = "immutable" if immutable_selected else "editable"
+                    item["managed_duplicate_role"] = "new"
             output.append(item)
         return {"calendars": output}
 
     @app.put("/api/calendar-rules")
     def put_calendar_rules(request: CalendarRulesUpdateRequest) -> dict[str, Any]:
-        current_config = app.state.context.config_manager.load()
-        reserved_calendar_ids = {
-            current_config.calendar_rules.staging_calendar_id,
-            current_config.calendar_rules.user_calendar_id,
-            current_config.calendar_rules.intake_calendar_id,
-            request.staging_calendar_id,
-            request.user_calendar_id,
-            request.intake_calendar_id,
-        }
-        reserved_calendar_ids = {cid for cid in reserved_calendar_ids if str(cid).strip()}
-
-        filtered_defaults: dict[str, dict[str, Any]] = {}
-        for calendar_id, behavior in (request.per_calendar_defaults or {}).items():
-            cid = str(calendar_id).strip()
-            if not cid or cid in reserved_calendar_ids:
-                continue
-            entry = behavior or {}
-            mode = str(entry.get("mode", "editable")).strip().lower()
-            if mode not in {"editable", "immutable"}:
-                mode = "editable"
-            filtered_defaults[cid] = {
-                "mode": mode,
-                "locked": bool(entry.get("locked", False)),
-            }
-
-        filtered_immutable_ids = [
-            str(cid).strip()
-            for cid in (request.immutable_calendar_ids or [])
-            if str(cid).strip() and str(cid).strip() not in reserved_calendar_ids
-        ]
-
         payload: dict[str, Any] = {
             "calendar_rules": {
-                "immutable_keywords": request.immutable_keywords,
-                "immutable_calendar_ids": filtered_immutable_ids,
-                "staging_calendar_id": request.staging_calendar_id,
+                "stack_calendar_id": request.stack_calendar_id,
                 "user_calendar_id": request.user_calendar_id,
-                "intake_calendar_id": request.intake_calendar_id,
-                "per_calendar_defaults": filtered_defaults,
+                "new_calendar_id": request.new_calendar_id,
             }
         }
-        if request.staging_calendar_name is not None:
-            payload["calendar_rules"]["staging_calendar_name"] = request.staging_calendar_name
+        if request.stack_calendar_name is not None:
+            payload["calendar_rules"]["stack_calendar_name"] = request.stack_calendar_name
         if request.user_calendar_name is not None:
             payload["calendar_rules"]["user_calendar_name"] = request.user_calendar_name
-        if request.intake_calendar_name is not None:
-            payload["calendar_rules"]["intake_calendar_name"] = request.intake_calendar_name
+        if request.new_calendar_name is not None:
+            payload["calendar_rules"]["new_calendar_name"] = request.new_calendar_name
         updated = app.state.context.config_manager.update(payload)
         return {"message": "calendar rules updated", "calendar_rules": updated.calendar_rules.__dict__}
 

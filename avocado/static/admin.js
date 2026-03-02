@@ -63,19 +63,19 @@ const I18N = {
     "field.model": "Model",
     "field.timeout_seconds": "Timeout Seconds",
     "field.system_prompt": "System Prompt",
+    "field.ai_enabled": "AI Enabled",
     "field.window_days": "Window Days",
     "field.interval_seconds": "Interval Seconds",
+    "field.freeze_hours": "Freeze Hours",
     "field.timezone": "Timezone",
     "field.custom_sync_start": "Custom Sync Start",
     "field.custom_sync_end": "Custom Sync End",
-    "field.immutable_keywords": "Immutable Keywords (comma separated)",
-    "field.immutable_calendar_ids": "Immutable Calendar IDs (auto-filled from calendar table)",
-    "field.staging_calendar_id": "Staging Calendar ID",
-    "field.staging_calendar_name": "Staging Calendar Name",
+    "field.stack_calendar_id": "Stack Calendar ID",
+    "field.stack_calendar_name": "Stack Calendar Name",
     "field.user_calendar_id": "User Calendar ID",
     "field.user_calendar_name": "User Calendar Name",
-    "field.intake_calendar_id": "Intake Calendar ID",
-    "field.intake_calendar_name": "Intake Calendar Name",
+    "field.new_calendar_id": "New Calendar ID",
+    "field.new_calendar_name": "New Calendar Name",
     "field.locked": "Locked",
     "field.editable_fields": "Editable Fields (comma separated)",
     "field.chart_days": "Retention Days",
@@ -83,8 +83,7 @@ const I18N = {
     "ai.test_link": "Test API connectivity",
     "hint.refresh_calendars": "Click Sync or Refresh Calendars to load latest list from server.",
     "table.name": "Name",
-    "table.immutable": "Immutable",
-    "table.default_locked": "Default Locked",
+    "table.role": "Role",
     "table.run_at": "Run At",
     "table.status": "Status",
     "table.trigger": "Trigger",
@@ -125,6 +124,7 @@ const I18N = {
     "status.error": "{detail}",
     "error.window_days": "window_days must be >= 1",
     "error.interval_seconds": "interval_seconds must be >= 30",
+    "error.freeze_hours": "freeze_hours must be >= 0",
     "error.timeout_seconds": "timeout_seconds must be >= 1",
     "error.custom_sync_missing": "Please provide both custom sync start and end",
     "error.custom_sync_range": "Custom sync end must be later than start",
@@ -148,12 +148,12 @@ const I18N = {
     "empty.sync_logs": "No sync logs.",
     "empty.audit_logs": "No audit logs.",
     "empty.ai_changes": "No AI-applied changes.",
-    "tag.stage": "stage",
-    "tag.user_layer": "user-layer",
+    "tag.stack": "stack",
+    "tag.user": "user",
+    "tag.new": "new",
     "tag.duplicate_user": "duplicate-user",
-    "tag.duplicate_staging": "duplicate-stage",
-    "tag.intake": "intake",
-    "tag.duplicate_intake": "duplicate-intake",
+    "tag.duplicate_stack": "duplicate-stack",
+    "tag.duplicate_new": "duplicate-new",
     "common.custom": "custom",
     "details.view": "View details",
     "details.empty": "No details",
@@ -203,19 +203,19 @@ const I18N = {
     "field.model": "模型",
     "field.timeout_seconds": "超时时间（秒）",
     "field.system_prompt": "系统提示词",
+    "field.ai_enabled": "启用 AI",
     "field.window_days": "窗口天数",
     "field.interval_seconds": "轮询间隔（秒）",
+    "field.freeze_hours": "冻结小时数",
     "field.timezone": "时区",
     "field.custom_sync_start": "自定义同步开始时间",
     "field.custom_sync_end": "自定义同步结束时间",
-    "field.immutable_keywords": "不可变关键字（逗号分隔）",
-    "field.immutable_calendar_ids": "不可变日历 ID（由日历表自动填充）",
-    "field.staging_calendar_id": "Stage 日历 ID",
-    "field.staging_calendar_name": "Stage 日历名称",
-    "field.user_calendar_id": "用户层日历 ID",
-    "field.user_calendar_name": "用户层日历名称",
-    "field.intake_calendar_id": "新日程日历 ID",
-    "field.intake_calendar_name": "新日程日历名称",
+    "field.stack_calendar_id": "Stack 日历 ID",
+    "field.stack_calendar_name": "Stack 日历名称",
+    "field.user_calendar_id": "User 日历 ID",
+    "field.user_calendar_name": "User 日历名称",
+    "field.new_calendar_id": "New 日历 ID",
+    "field.new_calendar_name": "New 日历名称",
     "field.locked": "锁定",
     "field.editable_fields": "可编辑字段（逗号分隔）",
     "field.chart_days": "保留天数",
@@ -223,8 +223,7 @@ const I18N = {
     "ai.test_link": "测试 API 连通性",
     "hint.refresh_calendars": "点击“执行同步”或“刷新日历”以加载服务器最新列表。",
     "table.name": "名称",
-    "table.immutable": "不可变",
-    "table.default_locked": "默认锁定",
+    "table.role": "角色",
     "table.run_at": "运行时间",
     "table.status": "状态",
     "table.trigger": "触发方式",
@@ -265,6 +264,7 @@ const I18N = {
     "status.error": "{detail}",
     "error.window_days": "window_days 必须 >= 1",
     "error.interval_seconds": "interval_seconds 必须 >= 30",
+    "error.freeze_hours": "freeze_hours 必须 >= 0",
     "error.timeout_seconds": "timeout_seconds 必须 >= 1",
     "error.custom_sync_missing": "请填写自定义同步开始和结束时间",
     "error.custom_sync_range": "结束时间必须晚于开始时间",
@@ -288,12 +288,12 @@ const I18N = {
     "empty.sync_logs": "暂无同步日志。",
     "empty.audit_logs": "暂无审计日志。",
     "empty.ai_changes": "暂无 AI 修改条目。",
-    "tag.stage": "stage",
-    "tag.user_layer": "用户层",
+    "tag.stack": "stack",
+    "tag.user": "user",
+    "tag.new": "new",
     "tag.duplicate_user": "重复用户层",
-    "tag.duplicate_staging": "重复stage",
-    "tag.intake": "新日程",
-    "tag.duplicate_intake": "重复新日程",
+    "tag.duplicate_stack": "重复stack",
+    "tag.duplicate_new": "重复new",
     "common.custom": "自定义",
     "details.view": "查看详情",
     "details.empty": "无详情",
@@ -611,6 +611,7 @@ const bindConfig = (cfg) => {
   document.getElementById("caldav-username").value = cfg.caldav?.username || "";
   document.getElementById("caldav-password").value = "";
 
+  document.getElementById("ai-enabled").checked = cfg.ai?.enabled !== false;
   document.getElementById("ai-base-url").value = cfg.ai?.base_url || "";
   document.getElementById("ai-api-key").value = "";
   const modelEl = document.getElementById("ai-model");
@@ -625,6 +626,7 @@ const bindConfig = (cfg) => {
 
   document.getElementById("sync-window-days").value = cfg.sync?.window_days ?? 7;
   document.getElementById("sync-interval-seconds").value = cfg.sync?.interval_seconds ?? 300;
+  document.getElementById("sync-freeze-hours").value = cfg.sync?.freeze_hours ?? 0;
   const timezoneEl = document.getElementById("sync-timezone");
   const tzValue = cfg.sync?.timezone || "UTC";
   if (![...timezoneEl.options].some((opt) => opt.value === tzValue)) {
@@ -635,41 +637,23 @@ const bindConfig = (cfg) => {
   }
   timezoneEl.value = tzValue;
 
-  document.getElementById("rules-immutable-keywords").value = joinList(
-    cfg.calendar_rules?.immutable_keywords || []
-  );
-  document.getElementById("rules-immutable-calendar-ids").value = (
-    cfg.calendar_rules?.immutable_calendar_ids || []
-  ).join("\n");
-  document.getElementById("rules-staging-calendar-id").value =
-    cfg.calendar_rules?.staging_calendar_id || "";
-  document.getElementById("rules-staging-calendar-name").value =
-    cfg.calendar_rules?.staging_calendar_name || "";
+  document.getElementById("rules-stack-calendar-id").value =
+    cfg.calendar_rules?.stack_calendar_id || "";
+  document.getElementById("rules-stack-calendar-name").value =
+    cfg.calendar_rules?.stack_calendar_name || "";
   document.getElementById("rules-user-calendar-id").value =
     cfg.calendar_rules?.user_calendar_id || "";
   document.getElementById("rules-user-calendar-name").value =
     cfg.calendar_rules?.user_calendar_name || "";
-  document.getElementById("rules-intake-calendar-id").value =
-    cfg.calendar_rules?.intake_calendar_id || "";
-  document.getElementById("rules-intake-calendar-name").value =
-    cfg.calendar_rules?.intake_calendar_name || "";
+  document.getElementById("rules-new-calendar-id").value =
+    cfg.calendar_rules?.new_calendar_id || "";
+  document.getElementById("rules-new-calendar-name").value =
+    cfg.calendar_rules?.new_calendar_name || "";
 
   document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
   document.getElementById("task-editable-fields").value = joinList(
     cfg.task_defaults?.editable_fields || []
   );
-};
-
-const syncImmutableIdsTextarea = () => {
-  const ids = [];
-  const rows = calendarBody.querySelectorAll("tr[data-calendar-id]");
-  rows.forEach((row) => {
-    const immutableCheckbox = row.querySelector("input[data-role='immutable']");
-    if (immutableCheckbox?.checked) {
-      ids.push(row.dataset.calendarId);
-    }
-  });
-  document.getElementById("rules-immutable-calendar-ids").value = ids.join("\n");
 };
 
 const renderCalendars = (calendars) => {
@@ -678,46 +662,34 @@ const renderCalendars = (calendars) => {
 
   if (!latestCalendars.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan='3'>${t("empty.calendars")}</td>`;
+    row.innerHTML = `<td colspan='2'>${t("empty.calendars")}</td>`;
     calendarBody.appendChild(row);
-    syncImmutableIdsTextarea();
     return;
   }
 
   latestCalendars.forEach((cal) => {
     const row = document.createElement("tr");
-    row.dataset.calendarId = cal.calendar_id;
-    const isReserved = !!(cal.is_staging || cal.is_user || cal.is_intake);
-    row.dataset.reserved = isReserved ? "1" : "0";
-
-    const immutableChecked = !!cal.immutable_selected;
-    const lockedChecked = !!cal.default_locked;
     const name = toDisplayValue(cal.name || "(Unnamed)");
     const calendarId = toDisplayValue(cal.calendar_id);
     const tags = [];
-    if (cal.is_staging) tags.push(t("tag.stage"));
-    if (cal.is_user) tags.push(t("tag.user_layer"));
-    if (cal.is_intake) tags.push(t("tag.intake"));
+    if (cal.is_stack) tags.push(t("tag.stack"));
+    if (cal.is_user) tags.push(t("tag.user"));
+    if (cal.is_new) tags.push(t("tag.new"));
     if (cal.managed_duplicate && cal.managed_duplicate_role === "user") tags.push(t("tag.duplicate_user"));
-    if (cal.managed_duplicate && cal.managed_duplicate_role === "staging") tags.push(t("tag.duplicate_staging"));
-    if (cal.managed_duplicate && cal.managed_duplicate_role === "intake") tags.push(t("tag.duplicate_intake"));
+    if (cal.managed_duplicate && cal.managed_duplicate_role === "stack") tags.push(t("tag.duplicate_stack"));
+    if (cal.managed_duplicate && cal.managed_duplicate_role === "new") tags.push(t("tag.duplicate_new"));
+    const roleText = tags.length ? tags.join(", ") : "-";
 
     row.innerHTML = `
       <td>
         <div><strong>${escapeHtml(name)}</strong></div>
-        <div class="muted" title="${escapeHtml(calendarId)}">${escapeHtml(calendarId)}${tags.length ? ` [${escapeHtml(tags.join(", "))}]` : ""}</div>
+        <div class="muted" title="${escapeHtml(calendarId)}">${escapeHtml(calendarId)}</div>
       </td>
-      <td><input type="checkbox" data-role="immutable" ${immutableChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
-      <td><input type="checkbox" data-role="locked" ${lockedChecked ? "checked" : ""} ${isReserved ? "disabled" : ""}></td>
+      <td>${escapeHtml(roleText)}</td>
     `;
-
-    const immutableInput = row.querySelector("input[data-role='immutable']");
-    immutableInput?.addEventListener("change", () => syncImmutableIdsTextarea());
 
     calendarBody.appendChild(row);
   });
-
-  syncImmutableIdsTextarea();
 };
 
 const renderSyncLogs = (runs) => {
@@ -923,38 +895,15 @@ const renderAiChanges = (changes) => {
   });
 };
 
-const readCalendarBehavior = () => {
-  const immutableCalendarIds = [];
-  const perCalendarDefaults = {};
-
-  const rows = calendarBody.querySelectorAll("tr[data-calendar-id]");
-  rows.forEach((row) => {
-    const calendarId = row.dataset.calendarId;
-    if (!calendarId) return;
-    if (row.dataset.reserved === "1") return;
-
-    const immutable = !!row.querySelector("input[data-role='immutable']")?.checked;
-    const locked = !!row.querySelector("input[data-role='locked']")?.checked;
-
-    if (immutable) immutableCalendarIds.push(calendarId);
-    perCalendarDefaults[calendarId] = {
-      mode: immutable ? "immutable" : "editable",
-      locked,
-    };
-  });
-
-  return { immutableCalendarIds, perCalendarDefaults };
-};
-
 const readPayload = () => {
   const windowDays = Number(document.getElementById("sync-window-days").value || "0");
   const intervalSeconds = Number(document.getElementById("sync-interval-seconds").value || "0");
+  const freezeHours = Number(document.getElementById("sync-freeze-hours").value || "0");
   const timeoutSeconds = Number(document.getElementById("ai-timeout-seconds").value || "0");
   if (windowDays < 1) throw new Error(t("error.window_days"));
   if (intervalSeconds < 30) throw new Error(t("error.interval_seconds"));
+  if (freezeHours < 0) throw new Error(t("error.freeze_hours"));
   if (timeoutSeconds < 1) throw new Error(t("error.timeout_seconds"));
-
-  const { immutableCalendarIds, perCalendarDefaults } = readCalendarBehavior();
 
   return {
     caldav: {
@@ -963,6 +912,7 @@ const readPayload = () => {
       password: document.getElementById("caldav-password").value,
     },
     ai: {
+      enabled: document.getElementById("ai-enabled").checked,
       base_url: document.getElementById("ai-base-url").value.trim(),
       api_key: document.getElementById("ai-api-key").value,
       model: document.getElementById("ai-model").value.trim(),
@@ -972,18 +922,16 @@ const readPayload = () => {
     sync: {
       window_days: windowDays,
       interval_seconds: intervalSeconds,
+      freeze_hours: freezeHours,
       timezone: document.getElementById("sync-timezone").value.trim(),
     },
     calendar_rules: {
-      immutable_keywords: splitByComma(document.getElementById("rules-immutable-keywords").value),
-      immutable_calendar_ids: immutableCalendarIds,
-      staging_calendar_id: document.getElementById("rules-staging-calendar-id").value.trim(),
-      staging_calendar_name: document.getElementById("rules-staging-calendar-name").value.trim(),
+      stack_calendar_id: document.getElementById("rules-stack-calendar-id").value.trim(),
+      stack_calendar_name: document.getElementById("rules-stack-calendar-name").value.trim(),
       user_calendar_id: document.getElementById("rules-user-calendar-id").value.trim(),
       user_calendar_name: document.getElementById("rules-user-calendar-name").value.trim(),
-      intake_calendar_id: document.getElementById("rules-intake-calendar-id").value.trim(),
-      intake_calendar_name: document.getElementById("rules-intake-calendar-name").value.trim(),
-      per_calendar_defaults: perCalendarDefaults,
+      new_calendar_id: document.getElementById("rules-new-calendar-id").value.trim(),
+      new_calendar_name: document.getElementById("rules-new-calendar-name").value.trim(),
     },
     task_defaults: {
       locked: document.getElementById("task-locked").checked,

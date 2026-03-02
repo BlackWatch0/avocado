@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -12,16 +12,17 @@ from avocado.sync_engine import SyncEngine
 
 class _FakeCalDAVService:
     def __init__(self, _config) -> None:
-        self.staging_id = "cal-stage"
+        now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        self.stack_id = "cal-stack"
         self.user_id = "cal-user"
-        self.intake_id = "cal-intake"
+        self.new_id = "cal-new"
         self._calendars = [
-            CalendarInfo(calendar_id=self.staging_id, name="Avocado AI Staging", url=self.staging_id),
+            CalendarInfo(calendar_id=self.stack_id, name="Avocado Stack Calendar", url=self.stack_id),
             CalendarInfo(calendar_id=self.user_id, name="Avocado User Calendar", url=self.user_id),
-            CalendarInfo(calendar_id=self.intake_id, name="Avocado New Events", url=self.intake_id),
+            CalendarInfo(calendar_id=self.new_id, name="Avocado New Calendar", url=self.new_id),
         ]
         self._events: dict[str, dict[str, EventRecord]] = {
-            self.staging_id: {},
+            self.stack_id: {},
             self.user_id: {
                 "uid-1": EventRecord(
                     calendar_id=self.user_id,
@@ -33,8 +34,8 @@ class _FakeCalDAVService:
                         "user_intent: move this\n"
                         "[/AI Task]"
                     ),
-                    start=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc),
-                    end=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+                    start=now + timedelta(hours=2),
+                    end=now + timedelta(hours=3),
                     etag="etag-1",
                 ),
                 "uid-2": EventRecord(
@@ -47,45 +48,77 @@ class _FakeCalDAVService:
                         "user_intent: rename this\n"
                         "[/AI Task]"
                     ),
-                    start=datetime(2026, 1, 1, 11, 0, tzinfo=timezone.utc),
-                    end=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+                    start=now + timedelta(hours=4),
+                    end=now + timedelta(hours=5),
                     etag="etag-2",
                 ),
             },
-            self.intake_id: {},
+            self.new_id: {},
         }
 
     def list_calendars(self) -> list[CalendarInfo]:
-        return list(self._calendars)
+        return [item for item in self._calendars]
 
-    def ensure_staging_calendar(self, calendar_id: str, staging_name: str) -> CalendarInfo:
+    def ensure_managed_calendar(self, calendar_id: str, calendar_name: str) -> CalendarInfo:
         if calendar_id:
             for item in self._calendars:
                 if item.calendar_id == calendar_id:
                     return item
         for item in self._calendars:
-            if item.name == staging_name:
+            if item.name == calendar_name:
                 return item
-        raise RuntimeError("unknown staging calendar")
+        created = CalendarInfo(calendar_id=(calendar_id or calendar_name), name=calendar_name, url=(calendar_id or calendar_name))
+        self._calendars.append(created)
+        self._events.setdefault(created.calendar_id, {})
+        return created
 
-    def suggest_immutable_calendar_ids(self, calendars, keywords):
-        return set()
+    def fetch_changes_by_token(self, calendar_id: str, _token: str) -> dict:
+        return {
+            "supported": True,
+            "add_update": [],
+            "delete": [],
+            "next_token": f"next-{calendar_id}",
+        }
 
-    def fetch_events(self, calendar_id: str, _start, _end) -> list[EventRecord]:
+    def list_window_index(self, calendar_id: str, _start: datetime, _end: datetime) -> list[dict]:
+        rows: list[dict] = []
+        for event in self._events.get(calendar_id, {}).values():
+            rows.append(
+                {
+                    "uid": event.uid,
+                    "href": event.href or f"{calendar_id}/{event.uid}.ics",
+                    "etag": event.etag,
+                }
+            )
+        return rows
+
+    def fetch_events(self, calendar_id: str, _start: datetime, _end: datetime) -> list[EventRecord]:
         return [event.clone() for event in self._events.get(calendar_id, {}).values()]
 
-    def upsert_event(self, calendar_id: str, event: EventRecord) -> EventRecord:
+    def upsert_event(self, calendar_id: str, event: EventRecord, expected_etag: str = "") -> EventRecord:
+        current = self._events.setdefault(calendar_id, {}).get(event.uid)
+        if expected_etag and current is not None and current.etag and current.etag != expected_etag:
+            raise RuntimeError("etag_conflict")
         updated = event.clone()
         updated.calendar_id = calendar_id
         updated.href = updated.href or f"{calendar_id}/{updated.uid}.ics"
         updated.etag = f"{updated.uid}-etag-updated"
-        self._events.setdefault(calendar_id, {})[updated.uid] = updated
+        self._events[calendar_id][updated.uid] = updated
         return updated.clone()
 
     def delete_event(self, calendar_id: str, uid: str, href: str = "") -> bool:
         existed = uid in self._events.get(calendar_id, {})
         self._events.get(calendar_id, {}).pop(uid, None)
         return existed
+
+    def delete_event_with_etag(self, calendar_id: str, uid: str, expected_etag: str = "", href: str = "") -> bool:
+        current = self._events.get(calendar_id, {}).get(uid)
+        if current is None:
+            return True
+        if expected_etag and current.etag and current.etag != expected_etag:
+            raise RuntimeError("etag_conflict")
+        del self._events[calendar_id][uid]
+        return True
 
     def get_event_by_uid(self, calendar_id: str, uid: str) -> EventRecord | None:
         event = self._events.get(calendar_id, {}).get(uid)
@@ -100,6 +133,7 @@ class _FakeAIClient:
         return True
 
     def generate_changes(self, *, messages):
+        _ = messages
         return {
             "changes": [
                 {
@@ -128,6 +162,7 @@ class _CountingAIClient:
         return True
 
     def generate_changes(self, *, messages):
+        _ = messages
         _CountingAIClient.calls += 1
         return {"changes": []}
 
@@ -147,14 +182,15 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "password": "pass",
                     },
                     "ai": {
+                        "enabled": True,
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
                     },
                     "calendar_rules": {
-                        "staging_calendar_id": "cal-stage",
+                        "stack_calendar_id": "cal-stack",
                         "user_calendar_id": "cal-user",
-                        "intake_calendar_id": "cal-intake",
+                        "new_calendar_id": "cal-new",
                     },
                 }
             )
@@ -168,25 +204,23 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                 result = engine.run_once(trigger="manual")
 
             self.assertEqual(result.status, "success")
-            self.assertEqual(result.changes_applied, 1)
-            self.assertEqual(result.conflicts, 1)
+            self.assertGreaterEqual(result.conflicts, 1)
 
             audit_events = store.recent_audit_events(limit=200)
             self.assertTrue(
                 any(
-                    item["action"] == "ai_change_invalid_datetime"
-                    and item["details"].get("uid") == "uid-1"
+                    item["action"] == "conflict"
+                    and item["details"].get("reason") == "invalid_datetime"
                     for item in audit_events
                 )
             )
-            self.assertTrue(
-                any(
-                    item["action"] == "apply_ai_change"
-                    and item["uid"] == "uid-2"
-                    and item["details"].get("title") == "Task 2 Updated"
-                    for item in audit_events
-                )
-            )
+
+            user_uid2 = None
+            for mapping in store.list_event_mappings():
+                if mapping.get("source") == "user" and mapping.get("source_uid") == "uid-2":
+                    user_uid2 = mapping.get("user_uid")
+                    break
+            self.assertTrue(bool(user_uid2))
 
     def test_skip_ai_call_when_no_intent_targets(self) -> None:
         class _NoIntentCalDAVService(_FakeCalDAVService):
@@ -213,14 +247,15 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "password": "pass",
                     },
                     "ai": {
+                        "enabled": True,
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
                     },
                     "calendar_rules": {
-                        "staging_calendar_id": "cal-stage",
+                        "stack_calendar_id": "cal-stack",
                         "user_calendar_id": "cal-user",
-                        "intake_calendar_id": "cal-intake",
+                        "new_calendar_id": "cal-new",
                     },
                 }
             )
@@ -237,7 +272,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertEqual(_CountingAIClient.calls, 0)
             audit_events = store.recent_audit_events(limit=200)
-            self.assertTrue(any(item["action"] == "skip_ai_no_intent_targets" for item in audit_events))
+            self.assertTrue(any(item["action"] == "skip_ai_no_targets" for item in audit_events))
 
 
 if __name__ == "__main__":

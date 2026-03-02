@@ -12,7 +12,7 @@ from avocado.caldav_client import CalDAVService
 from avocado.config_manager import ConfigManager
 from avocado.models import EventRecord, serialize_datetime
 from avocado.state_store import StateStore
-from avocado.sync_engine import SyncEngine, _staging_uid
+from avocado.sync_engine import SyncEngine
 
 
 def _parse_args() -> argparse.Namespace:
@@ -100,7 +100,7 @@ def _evaluate_case(
         passed = (not moved) and description_changed
     elif expect == "desc_update_no_time_change":
         passed = (not moved) and description_changed
-    elif expect == "intake_import_keep_time":
+    elif expect == "new_import_keep_time":
         passed = not moved
 
     details: dict[str, object] = {
@@ -130,17 +130,17 @@ def main() -> int:
     if not isinstance(cases, list) or not cases:
         raise ValueError("Case file must be a non-empty JSON list")
 
-    stage_info = service.ensure_staging_calendar(
-        config.calendar_rules.staging_calendar_id,
-        config.calendar_rules.staging_calendar_name,
+    stack_info = service.ensure_managed_calendar(
+        config.calendar_rules.stack_calendar_id,
+        config.calendar_rules.stack_calendar_name,
     )
-    user_info = service.ensure_staging_calendar(
+    user_info = service.ensure_managed_calendar(
         config.calendar_rules.user_calendar_id,
         config.calendar_rules.user_calendar_name,
     )
-    intake_info = service.ensure_staging_calendar(
-        config.calendar_rules.intake_calendar_id,
-        config.calendar_rules.intake_calendar_name,
+    new_info = service.ensure_managed_calendar(
+        config.calendar_rules.new_calendar_id,
+        config.calendar_rules.new_calendar_name,
     )
 
     local_tz = ZoneInfo(config.sync.timezone or "UTC")
@@ -156,7 +156,7 @@ def main() -> int:
         min_day_offset = day_offset if min_day_offset is None else min(min_day_offset, day_offset)
         max_day_offset = day_offset if max_day_offset is None else max(max_day_offset, day_offset)
         source_calendar = str(case.get("source_calendar", "user")).strip().lower() or "user"
-        if source_calendar not in {"user", "intake"}:
+        if source_calendar not in {"user", "new"}:
             raise ValueError(f"Unsupported source_calendar: {source_calendar}")
 
         start_utc = _resolve_datetime_utc(
@@ -173,8 +173,8 @@ def main() -> int:
         )
 
         raw_uid = str(uuid4())
-        target_calendar_id = user_info.calendar_id if source_calendar == "user" else intake_info.calendar_id
-        expected_user_uid = raw_uid if source_calendar == "user" else _staging_uid(intake_info.calendar_id, raw_uid)
+        target_calendar_id = user_info.calendar_id if source_calendar == "user" else new_info.calendar_id
+        expected_user_uid = raw_uid if source_calendar == "user" else ""
         event = EventRecord(
             calendar_id=target_calendar_id,
             uid=raw_uid,
@@ -243,9 +243,20 @@ def main() -> int:
         before_start = datetime.fromisoformat(str(before["start"]))
         before_end = datetime.fromisoformat(str(before["end"]))
         before_description = str(before["description"])
-        after_user = service.get_event_by_uid(user_info.calendar_id, expected_user_uid)
-        after_stage = service.get_event_by_uid(stage_info.calendar_id, expected_user_uid)
-        after_intake_raw = service.get_event_by_uid(intake_info.calendar_id, raw_uid)
+        mapped_user_uid = expected_user_uid
+        mapped_stack_uid = ""
+        if str(item["source_calendar"]) == "new":
+            for mapping in store.list_event_mappings():
+                if str(mapping.get("source")) == "new" and str(mapping.get("source_uid")) == raw_uid:
+                    mapped_user_uid = str(mapping.get("user_uid", "") or "")
+                    mapped_stack_uid = str(mapping.get("stack_uid", "") or "")
+                    break
+        after_user = service.get_event_by_uid(user_info.calendar_id, mapped_user_uid) if mapped_user_uid else None
+        after_stack = service.get_event_by_uid(stack_info.calendar_id, mapped_stack_uid) if mapped_stack_uid else None
+        if after_stack is None and mapped_user_uid:
+            # fallback for cases where user_uid and stack_uid are aligned in test doubles
+            after_stack = service.get_event_by_uid(stack_info.calendar_id, mapped_user_uid)
+        after_new_raw = service.get_event_by_uid(new_info.calendar_id, raw_uid)
         passed, details = _evaluate_case(
             expect=str(item["expect"]),
             before_start=before_start,
@@ -260,21 +271,27 @@ def main() -> int:
         ]
         calendar_assertions = {
             "user_event_exists": after_user is not None,
-            "stage_event_exists": after_stage is not None,
-            "intake_raw_event_exists": after_intake_raw is not None,
+            "stack_event_exists": after_stack is not None,
+            "new_raw_event_exists": after_new_raw is not None,
         }
-        calendar_passed = (
-            calendar_assertions["user_event_exists"]
-            and calendar_assertions["stage_event_exists"]
-            and (not calendar_assertions["intake_raw_event_exists"])
-        )
+        if str(item["source_calendar"]) == "new":
+            calendar_passed = (
+                calendar_assertions["user_event_exists"]
+                and calendar_assertions["stack_event_exists"]
+                and (not calendar_assertions["new_raw_event_exists"])
+            )
+        else:
+            calendar_passed = (
+                calendar_assertions["user_event_exists"]
+                and calendar_assertions["stack_event_exists"]
+            )
         overall_passed = bool(passed and calendar_passed)
         checks.append(
             {
                 "name": str(item["name"]),
                 "source_calendar": str(item["source_calendar"]),
                 "uid": raw_uid,
-                "expected_user_uid": expected_user_uid,
+                "expected_user_uid": mapped_user_uid,
                 "expect": str(item["expect"]),
                 "passed": overall_passed,
                 "behavior_passed": bool(passed),
@@ -293,9 +310,9 @@ def main() -> int:
         "session": session,
         "principal_username": config.caldav.username,
         "managed_calendars": {
-            "stage": stage_info.calendar_id,
+            "stack": stack_info.calendar_id,
             "user": user_info.calendar_id,
-            "intake": intake_info.calendar_id,
+            "new": new_info.calendar_id,
         },
         "window_start": serialize_datetime(window_start),
         "window_end": serialize_datetime(window_end),
