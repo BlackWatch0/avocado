@@ -7,12 +7,18 @@ from typing import Any
 
 import yaml
 
-from avocado.core.models import DEFAULT_EDITABLE_FIELDS, TaskDefaultsConfig
+from avocado.core.models import (
+    AI_TASK_ALL_FIELDS,
+    AI_TASK_META_FIELDS,
+    AI_TASK_PUBLIC_FIELDS,
+    DEFAULT_EDITABLE_FIELDS,
+    TaskDefaultsConfig,
+)
 
 AI_TASK_START = "[AI Task]"
 AI_TASK_END = "[/AI Task]"
 AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", re.DOTALL)
-ALLOWED_TASK_KEYS = {"version", "locked", "editable_fields", "category", "user_intent", "updated_at"}
+ALLOWED_TASK_KEYS = set(AI_TASK_ALL_FIELDS)
 logger = logging.getLogger(__name__)
 
 
@@ -137,3 +143,13 @@ def set_ai_task_user_intent(
     final_description = upsert_ai_task_block(updated_description, task_payload)
     return final_description, task_payload, True
 
+
+def ai_task_payload_from_description(
+    description: str,
+    defaults: TaskDefaultsConfig,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    normalized_description, task_payload, _ = ensure_ai_task_block(description or "", defaults)
+    visible_description = strip_ai_task_block(normalized_description)
+    ai_task = {key: task_payload.get(key) for key in AI_TASK_PUBLIC_FIELDS}
+    x_meta = {f"x-{key}": task_payload.get(key) for key in AI_TASK_META_FIELDS}
+    return visible_description, ai_task, x_meta

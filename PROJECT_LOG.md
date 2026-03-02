@@ -62,6 +62,13 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-03-03 | 防重复触发修复：AI 成功改动后消费意图 + 后态哈希去重 | `avocado/sync/pipeline.py`, `tests/test_ai_request_audit.py` | 仅对“成功应用 AI 改动”的事件清空 `user_intent`；`last_applied_ai_hash` 改为记录 AI 应用后的最终状态，避免下一轮因 AI 自身写回再次触发 | 风险低；若希望同一意图持续生效需再次填写 `user_intent`，回滚可恢复旧哈希策略与清空时机 | AVO-064 |
+| 2026-03-03 | AI payload 重构：本地解析 `[AI Task]` 并提升字段 | `avocado/sync/pipeline.py`, `avocado/task_block.py`, `avocado/planner.py`, `avocado/core/models/ai_task_fields.py`, `tests/test_task_block.py`, `tests/test_ai_request_audit.py` | 发送给 AI 的 `description` 改为仅正文；`[AI Task]` 解析后拆为 `ai_task`（`locked/category/user_intent`）与 `x-*` 元字段（`x-version/x-editable_fields/x-updated_at`）；同时只发 Stage 层并按 UID 去重，压缩 `calendar_id` 为短别名后回映射 | 风险中等；prompt 需适配新 payload 结构，回滚可恢复旧 `description` 内嵌 `[AI Task]` 传输 | AVO-063 |
+| 2026-03-03 | Prompt 独立存储并迁移到根目录 | `avocado/config_manager.py`, `docker-compose.yml`, `avocado/templates/admin.html`, `avocado/static/admin/i18n.js`, `README.md`, `config.example.yaml`, `tests/test_config_manager.py` | `ai.system_prompt` 从 `config.yaml` 分离到根目录 `ai_system_prompt.txt`（容器 `/app/ai_system_prompt.txt`）；首次读取可自动迁移旧配置/旧路径 `data/ai_system_prompt.txt`；后台单独 Prompt 区域可编辑 | 风险低；升级时需确保根目录 prompt 文件可写，回滚可改回 `config.yaml` 内嵌存储 | AVO-062 |
+| 2026-03-03 | 指标升级：AI 请求字节改为 Token 消耗 | `avocado/ai_client.py`, `avocado/sync/pipeline.py`, `avocado/web_admin/routes/ai.py`, `avocado/persistence/state_store/repo_audit.py`, `avocado/static/admin/ai_bytes_chart.js`, `avocado/static/admin/i18n.js`, `tests/test_ai_request_audit.py`, `tests/test_web_admin.py` | 审计记录新增 `prompt_tokens/completion_tokens/total_tokens`；图表改展示 token 消耗；`/api/ai/test` 也写入 `ai_request` 指标点，便于快速观测 | 风险低；历史仅有字节数据的记录不会进入 token 图，回滚可恢复 `request_bytes` 聚合 | AVO-061 |
+| 2026-03-03 | AI payload I/O 测试日志落盘 | `avocado/ai_client.py`, `avocado/core/models/config.py`, `config.example.yaml`, `README.md`, `tests/test_ai_client_payload_logging.py` | 新增 `ai.payload_logging_enabled/payload_log_path/payload_log_max_chars`；每次 AI 请求记录请求体与响应体（JSONL），用于联调；默认关闭 | 风险中等；开启后可能记录敏感业务文本，联调后建议关闭或清理 | AVO-060 |
+| 2026-03-03 | 管理端模型列表加载稳定性修复 | `avocado/static/admin/index.js`, `avocado/templates/admin.html` | AI 连通性测试后模型下拉改为“全量替换重建”而非增量追加；静态脚本版本号刷新防缓存导致旧逻辑残留 | 风险低；仅前端行为调整，回滚可恢复旧追加逻辑 | AVO-059 |
+| 2026-03-03 | 重复托管日历创建修复（路径归一匹配） | `avocado/integrations/caldav/helpers.py`, `avocado/integrations/caldav/service.py`, `tests/test_caldav_service.py` | `ensure_managed_calendar` 增加按规范化路径匹配（host/scheme 差异兜底），避免同一路径被误判为新日历导致重复创建 | 风险低；若供应商路径语义特殊可回滚匹配策略 | AVO-058 |
 | 2026-03-03 | 宿主机时区自动读取 + 管理后台时区来源配置 | `avocado/timezone_utils.py`, `avocado/sync/engine.py`, `avocado/sync/pipeline.py`, `avocado/web_admin/routes/config.py`, `avocado/templates/admin.html`, `avocado/static/admin/*`, `avocado/core/models/config.py`, `config.example.yaml`, `README.md`, `tests/test_timezone_utils.py`, `tests/test_web_admin.py` | 同步窗口与 AI planning payload 的 `timezone` 改为按 `sync.timezone_source` 解析：`host` 自动检测宿主机时区，`manual` 使用 `sync.timezone`；管理后台新增“时区来源（自动/手动）+ 宿主机/生效时区展示”并提供 `GET /api/system/timezone`。 | 风险低；若自动识别不符合预期，可将 `timezone_source` 切回 `manual` 并显式设置 `timezone`。 | AVO-056 |
 | 2026-03-02 | 模型层模块化拆分（`core/models`） | `avocado/core/models/*`, `avocado/config_manager.py`, `avocado/ai_client.py`, `avocado/planner.py`, `avocado/reconciler.py`, `avocado/task_block.py`, `tests/*` | 原 `avocado/models.py` 拆分为 `constants/time_utils/config/entities`，全仓切换到 `from avocado.core.models import ...`，配置与实体语义保持不变。 | 风险低；若需回滚可恢复 `avocado/models.py` 单文件并批量改回 import。 | AVO-049 |
 | 2026-03-02 | CalDAV 集成层拆分（`integrations/caldav`） | `avocado/integrations/caldav/*`, `avocado/tools/*`, `avocado/sync/*`, `avocado/web_admin/routes/*` | 原 `caldav_client.py` 拆分为 `service/codec/calendar_ops/delta_ops/helpers`，保留 token 增量、窗口索引、X-AVO 字段读写能力。 | 风险中等；若出现供应商兼容回归可回滚到旧单文件实现。 | AVO-050 |
@@ -127,6 +134,13 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-064 | 防重复触发：成功改动后消费意图 + 后态哈希去重 | Done | AI 成功改动后仅清空对应事件 `user_intent`；下一轮不因 AI 自身写回重复触发 | P0 | AVO-061, AVO-063 | 2026-03-03 |
+| AVO-063 | AI payload 结构升级（独立 `ai_task` + `x-*`） | Done | `[AI Task]` 字段独立上送，`description` 仅正文；仅发送 Stage 且 UID 去重；`calendar_id` 压缩并回映射 | P0 | AVO-062 | 2026-03-03 |
+| AVO-062 | Prompt 独立文件存储与根目录迁移 | Done | `ai_system_prompt.txt` 独立持久化并由后台编辑；支持旧配置自动迁移 | P1 | AVO-053, AVO-054 | 2026-03-03 |
+| AVO-061 | AI 消耗指标改为 Token 统计 | Done | 后端审计与前端图表均基于 `total_tokens` 展示，可区分 prompt/completion | P1 | AVO-060 | 2026-03-03 |
+| AVO-060 | AI 请求/响应测试日志导出 | Done | 可配置导出每次 AI 请求/响应内容到 JSONL，便于联调复盘 | P1 | AVO-053 | 2026-03-03 |
+| AVO-059 | 管理端模型下拉稳定性修复 | Done | 连通性测试后模型列表正确覆盖更新，前端缓存不再导致旧逻辑残留 | P1 | AVO-054 | 2026-03-03 |
+| AVO-058 | 重复托管日历创建修复 | Done | 管理日历按路径归一匹配，避免同路径重复创建保留日历 | P0 | AVO-050, AVO-047 | 2026-03-03 |
 | AVO-056 | 宿主机时区自动读取与后台来源切换 | Done | 同步窗口与 AI payload 使用自动/手动时区来源；后台可查看宿主机与生效时区并切换来源 | P1 | AVO-053, AVO-054 | 2026-03-03 |
 | AVO-055 | 工具脚本迁移到 `avocado.tools` | Done | `smoke/e2e/user_case_runner` 统一使用 `python -m avocado.tools.*` 运行，README 与测试路径同步更新 | P1 | AVO-049 | 2026-03-02 |
 | AVO-054 | 管理端前端 ES Modules 模块化 | Done | 管理页改为 `type=module`，JS/CSS 拆分到 `static/admin` 多模块，原页面功能可用 | P0 | AVO-053 | 2026-03-02 |

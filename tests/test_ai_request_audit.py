@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -159,6 +160,106 @@ class AIRequestAuditTests(unittest.TestCase):
             points = state_store.ai_request_bytes_series(days=30, limit=100)
             self.assertGreaterEqual(len(points), 1)
             self.assertGreater(points[-1]["request_tokens"], 0)
+
+    def test_second_run_does_not_retrigger_after_ai_time_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            manager = ConfigManager(root / "config.yaml")
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://caldav.example.com",
+                        "username": "tester",
+                        "password": "secret",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "test-key",
+                        "model": "gpt-4o-mini",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": _FakeCalDAVService.stack_calendar_id,
+                        "stack_calendar_name": "Avocado Stack Calendar",
+                        "user_calendar_id": _FakeCalDAVService.user_calendar_id,
+                        "user_calendar_name": "Avocado User Calendar",
+                        "new_calendar_id": _FakeCalDAVService.new_calendar_id,
+                        "new_calendar_name": "Avocado New Calendar",
+                    },
+                }
+            )
+            state_store = StateStore(str(root / "state.db"))
+            fake_service = _FakeCalDAVService(object())
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", return_value=fake_service),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient") as ai_client_cls,
+            ):
+                ai_client = ai_client_cls.return_value
+                ai_client.is_configured.return_value = True
+
+                source_event = fake_service.events_by_calendar[_FakeCalDAVService.source_calendar_id]["source-uid"]
+                new_start = source_event.start - timedelta(minutes=30)
+                new_end = source_event.end - timedelta(minutes=30)
+                ai_client.last_usage = {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                }
+                calls = {"count": 0}
+                captured_payloads: list[dict] = []
+
+                def _generate_changes(*, messages):
+                    calls["count"] += 1
+                    user_payload = {}
+                    for msg in messages:
+                        if str(msg.get("role", "")) == "user":
+                            try:
+                                user_payload = json.loads(str(msg.get("content", "")))
+                            except Exception:
+                                user_payload = {}
+                            break
+                    if isinstance(user_payload, dict):
+                        captured_payloads.append(user_payload)
+                    events = user_payload.get("events", []) if isinstance(user_payload, dict) else []
+                    target_uid = ""
+                    if isinstance(events, list) and events:
+                        target_uid = str((events[0] or {}).get("uid", "")).strip()
+                    return {
+                        "changes": [
+                            {
+                                "calendar_id": _FakeCalDAVService.stack_calendar_id,
+                                "uid": target_uid,
+                                "start": new_start.isoformat(),
+                                "end": new_end.isoformat(),
+                                "reason": "postpone 30 minutes",
+                            }
+                        ]
+                    }
+
+                ai_client.generate_changes.side_effect = _generate_changes
+
+                engine = SyncEngine(manager, state_store)
+                first_result = engine.run_once(trigger="manual")
+                self.assertEqual(first_result.status, "success")
+
+                second_result = engine.run_once(trigger="manual")
+                self.assertEqual(second_result.status, "success")
+                self.assertEqual(calls["count"], 1)
+                self.assertGreaterEqual(len(captured_payloads), 1)
+                first_payload = captured_payloads[0]
+                payload_events = first_payload.get("events", [])
+                self.assertGreaterEqual(len(payload_events), 1)
+                self.assertTrue(all(str((item or {}).get("calendar_id", "")) == "stack" for item in payload_events))
+                first_event = payload_events[0] or {}
+                self.assertIn("ai_task", first_event)
+                self.assertIn("x-version", first_event)
+                self.assertIn("x-editable_fields", first_event)
+                self.assertIn("x-updated_at", first_event)
+                self.assertNotIn("[AI Task]", str(first_event.get("description", "")))
+
+                user_events = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())
+                self.assertGreaterEqual(len(user_events), 1)
+                self.assertIn("user_intent: ''", user_events[0].description or "")
 
 
 if __name__ == "__main__":

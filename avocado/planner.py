@@ -8,10 +8,11 @@ from avocado.core.models import DEFAULT_AI_SYSTEM_PROMPT, EventRecord
 
 def build_planning_payload(
     *,
-    events: list[EventRecord],
+    events: list[EventRecord] | None,
     window_start: str,
     window_end: str,
     timezone: str,
+    events_payload: list[dict[str, Any]] | None = None,
     target_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload = {
@@ -20,7 +21,7 @@ def build_planning_payload(
             "end": window_end,
             "timezone": timezone,
         },
-        "events": [event.to_dict() for event in events],
+        "events": list(events_payload or [event.to_dict() for event in (events or [])]),
     }
     if target_events:
         payload["target_events"] = target_events
@@ -53,5 +54,4 @@ def normalize_changes(raw_changes: list[dict[str, Any]]) -> list[dict[str, Any]]
                 cleaned[field] = item[field]
         normalized.append(cleaned)
     return normalized
-
 

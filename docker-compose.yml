@@ -10,10 +10,12 @@ services:
     environment:
       AVOCADO_CONFIG_PATH: /app/config.yaml
       AVOCADO_STATE_PATH: /app/data/state.db
+      AVOCADO_PROMPT_PATH: /app/ai_system_prompt.txt
       AVOCADO_HOST: 0.0.0.0
       AVOCADO_PORT: "8080"
     volumes:
       - ./config.yaml:/app/config.yaml
+      - ./ai_system_prompt.txt:/app/ai_system_prompt.txt
       - ./data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]

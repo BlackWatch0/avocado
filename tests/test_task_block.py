@@ -4,6 +4,7 @@ from avocado.core.models import TaskDefaultsConfig
 from avocado.task_block import (
     AI_TASK_END,
     AI_TASK_START,
+    ai_task_payload_from_description,
     ensure_ai_task_block,
     parse_ai_task_block,
     set_ai_task_category,
@@ -54,8 +55,28 @@ class TaskBlockTests(unittest.TestCase):
         self.assertEqual(payload["user_intent"], "")
         self.assertIn("user_intent: ''", updated)
 
+    def test_ai_task_payload_from_description(self) -> None:
+        description = (
+            "Visible text\n\n"
+            "[AI Task]\n"
+            "version: 2\n"
+            "locked: false\n"
+            "editable_fields:\n"
+            "  - start\n"
+            "  - end\n"
+            "category: focus\n"
+            "user_intent: postpone 30 minutes\n"
+            "updated_at: '2026-03-03T00:00:00+00:00'\n"
+            "[/AI Task]"
+        )
+        visible, ai_task, x_meta = ai_task_payload_from_description(description, self.defaults)
+        self.assertEqual(visible, "Visible text")
+        self.assertEqual(ai_task.get("user_intent"), "postpone 30 minutes")
+        self.assertIn("x-version", x_meta)
+        self.assertIn("x-editable_fields", x_meta)
+        self.assertIn("x-updated_at", x_meta)
+
 
 if __name__ == "__main__":
     unittest.main()
-
 

@@ -50,6 +50,7 @@ Avocado is a CalDAV-oriented AI scheduling service that can:
    - `caldav.base_url`, `caldav.username`, `caldav.password`
    - `ai.base_url`, `ai.api_key`, `ai.model`
    - optional `sync.window_days`, `sync.interval_seconds`, `sync.timezone_source`, `sync.timezone`
+   - AI system prompt is stored separately at `ai_system_prompt.txt` (managed in admin page)
 
 ### 3. Admin Port Mapping
 
@@ -88,7 +89,9 @@ PowerShell example:
 ### 7. Persistence and Backup
 
 - host `./config.yaml` -> container `/app/config.yaml`
+- host `./ai_system_prompt.txt` -> container `/app/ai_system_prompt.txt`
 - host `./data` -> container `/app/data`
+- AI prompt file defaults to `/app/ai_system_prompt.txt` (override with `AVOCADO_PROMPT_PATH`)
 
 Recommendation:
 - backup `config.yaml` and `data/` regularly

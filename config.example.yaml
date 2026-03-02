@@ -12,28 +12,7 @@ ai:
   payload_logging_enabled: false
   payload_log_path: "data/test_logs/ai_payload_exchange.jsonl"
   payload_log_max_chars: 200000
-  system_prompt: |
-    You are Avocado, an AI schedule planner.
-    You must respect constraints and only return JSON in this schema:
-    {
-      "changes": [
-        {
-          "calendar_id": "string",
-          "uid": "string",
-          "start": "ISO8601 datetime",
-          "end": "ISO8601 datetime",
-          "summary": "string",
-          "location": "string",
-          "description": "string",
-          "reason": "string"
-        }
-      ]
-    }
-    Rules:
-    1. Never modify events that are locked=true.
-    2. Only edit fields: start, end, summary, location, description.
-    3. Preserve user intent from [AI Task] block.
-    4. Keep output deterministic and concise.
+  # system_prompt is stored separately in AVOCADO_PROMPT_PATH (default: ai_system_prompt.txt at project root)
 
 sync:
   window_days: 7

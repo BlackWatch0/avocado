@@ -17,7 +17,7 @@ from avocado.sync.helpers_intent import (
     _extract_editable_fields,
     _extract_user_intent,
 )
-from avocado.task_block import ensure_ai_task_block
+from avocado.task_block import ai_task_payload_from_description, ensure_ai_task_block, set_ai_task_user_intent
 from avocado.timezone_utils import resolve_effective_timezone
 
 
@@ -363,8 +363,13 @@ class PipelineMixin:
             target_events_payload: list[dict[str, Any]] = []
             hash_items: list[dict[str, Any]] = []
             stack_uid_to_sync_id: dict[str, str] = {}
+            seen_stage_uids: set[str] = set()
             for sync_id, event in sorted(stack_state.items(), key=lambda pair: pair[0]):
                 if sync_id in deleted_sync_ids:
+                    continue
+                if event.calendar_id != stack_info.calendar_id:
+                    continue
+                if event.uid and event.uid in seen_stage_uids:
                     continue
                 # Ensure managed layers always carry a normalized [AI Task] block.
                 normalized_description, _, description_changed = ensure_ai_task_block(
@@ -376,6 +381,7 @@ class PipelineMixin:
                 planning_events.append(event)
                 if event.uid:
                     stack_uid_to_sync_id[event.uid] = sync_id
+                    seen_stage_uids.add(event.uid)
                 hash_items.append(
                     {
                         "sync_id": sync_id,
@@ -406,16 +412,33 @@ class PipelineMixin:
             ai_input_hash = _hash_text(json.dumps(hash_items, ensure_ascii=False, sort_keys=True))
             last_ai_hash = self.state_store.get_meta("last_applied_ai_hash")
             raw_changes: list[dict[str, Any]] = []
+            payload_calendar_to_real: dict[str, str] = {}
 
             if config.ai.enabled and target_events_payload and ai_input_hash != last_ai_hash:
                 ai_client = OpenAICompatibleClient(config.ai)
                 if ai_client.is_configured():
+                    payload_calendar_to_real = {"stack": stack_info.calendar_id}
+                    real_to_payload_calendar = {v: k for k, v in payload_calendar_to_real.items()}
+                    payload_events: list[dict[str, Any]] = []
+                    for event in planning_events:
+                        payload_event = event.with_updates(
+                            calendar_id=real_to_payload_calendar.get(event.calendar_id, event.calendar_id)
+                        ).to_dict()
+                        visible_description, ai_task, x_task_meta = ai_task_payload_from_description(
+                            event.description or "",
+                            config.task_defaults,
+                        )
+                        payload_event["description"] = visible_description
+                        payload_event["ai_task"] = ai_task
+                        payload_event.update(x_task_meta)
+                        payload_events.append(payload_event)
                     payload = build_planning_payload(
-                        events=planning_events,
+                        events=None,
+                        events_payload=payload_events,
                         window_start=serialize_datetime(window_start) or "",
                         window_end=serialize_datetime(window_end) or "",
                         timezone=effective_timezone,
-                        target_events=target_events_payload,
+                        target_events=None,
                     )
                     messages = build_messages(payload, system_prompt=config.ai.system_prompt)
                     request_payload = {
@@ -426,6 +449,12 @@ class PipelineMixin:
                     }
                     request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
                     raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
+                    for change in raw_changes:
+                        if not isinstance(change, dict):
+                            continue
+                        payload_calendar_id = str(change.get("calendar_id", "")).strip()
+                        if payload_calendar_id in payload_calendar_to_real:
+                            change["calendar_id"] = payload_calendar_to_real[payload_calendar_id]
                     usage = dict(getattr(ai_client, "last_usage", {}) or {})
                     _audit(
                         calendar_id="system",
@@ -540,6 +569,13 @@ class PipelineMixin:
                 updated.x_source_uid = current_event.x_source_uid
                 updated.original_calendar_id = current_event.original_calendar_id
                 updated.original_uid = current_event.original_uid
+                # After an AI-applied change, clear user_intent to prevent repeated triggering.
+                updated_description, _, _ = set_ai_task_user_intent(
+                    updated.description or "",
+                    config.task_defaults,
+                    "",
+                )
+                updated.description = updated_description
                 stack_state[sync_id] = updated
                 _audit(
                     calendar_id=current_event.calendar_id,
@@ -723,7 +759,25 @@ class PipelineMixin:
                     self.state_store.set_sync_token(source_key=source_key, sync_token=next_token)
 
             if config.ai.enabled:
-                self.state_store.set_meta("last_applied_ai_hash", ai_input_hash)
+                # Persist hash of post-AI state to avoid retriggering on AI's own writeback.
+                final_hash_items: list[dict[str, Any]] = []
+                for sync_id, event in sorted(stack_state.items(), key=lambda pair: pair[0]):
+                    if sync_id in deleted_sync_ids:
+                        continue
+                    final_hash_items.append(
+                        {
+                            "sync_id": sync_id,
+                            "uid": event.uid,
+                            "summary": event.summary,
+                            "description": event.description,
+                            "location": event.location,
+                            "start": serialize_datetime(event.start),
+                            "end": serialize_datetime(event.end),
+                            "locked": bool(_event_locked_for_ai(event)),
+                        }
+                    )
+                final_ai_hash = _hash_text(json.dumps(final_hash_items, ensure_ascii=False, sort_keys=True))
+                self.state_store.set_meta("last_applied_ai_hash", final_ai_hash)
 
             duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             message = f"Processed {len(processed_sync_ids)} sync items."

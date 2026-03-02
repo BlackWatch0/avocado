@@ -138,17 +138,11 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(data["models"], ["gpt-4o-mini", "gpt-4.1-mini"])
 
     def test_ai_connectivity_records_ai_request_tokens_metric(self) -> None:
-        def _fake_test_connectivity(client_self) -> tuple[bool, str]:
-            client_self.last_usage = {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
-            return True, "Connected. Model response: OK"
-
-        with mock.patch(
-            "avocado.web_admin.routes.ai.OpenAICompatibleClient.test_connectivity",
-            side_effect=_fake_test_connectivity,
-        ), mock.patch(
-            "avocado.web_admin.routes.ai.OpenAICompatibleClient.list_models",
-            return_value=["gpt-4o-mini"],
-        ):
+        with mock.patch("avocado.web_admin.routes.ai.OpenAICompatibleClient") as client_cls:
+            client = client_cls.return_value
+            client.test_connectivity.return_value = (True, "Connected. Model response: OK")
+            client.list_models.return_value = ["gpt-4o-mini"]
+            client.last_usage = {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
             resp = self.client.post("/api/ai/test")
         self.assertEqual(resp.status_code, 200)
         metric_resp = self.client.get("/api/metrics/ai-request-bytes?days=90&limit=100")

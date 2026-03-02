@@ -63,7 +63,14 @@
           </select>
         </label>
         <label><span data-i18n="field.timeout_seconds">Timeout Seconds</span><input id="ai-timeout-seconds" type="number" min="1" required></label>
-        <label><span data-i18n="field.system_prompt">System Prompt</span><textarea id="ai-system-prompt" rows="10"></textarea></label>
+      </section>
+
+      <section class="card wide" data-panel="config">
+        <h2 data-i18n="section.prompt">Prompt</h2>
+        <label>
+          <span data-i18n="field.system_prompt">System Prompt</span>
+          <textarea id="ai-system-prompt" rows="14"></textarea>
+        </label>
       </section>
 
       <section class="card" data-panel="config">
@@ -224,6 +231,6 @@
     </form>
   </main>
 
-  <script type="module" src="/static/admin/index.js?v=20260303b"></script>
+  <script type="module" src="/static/admin/index.js?v=20260303c"></script>
 </body>
 </html>
