@@ -19,6 +19,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalize_user_intent(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.casefold() in {"", "\"\"", "''", "null", "none", "~"}:
+        return ""
+    return text
+
+
 def build_default_task(defaults: TaskDefaultsConfig) -> dict[str, Any]:
     return {
         "version": 1,
@@ -66,6 +73,7 @@ def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dic
     normalized["editable_fields"] = cleaned or list(DEFAULT_EDITABLE_FIELDS)
     normalized["locked"] = bool(normalized.get("locked", defaults.locked))
     normalized["category"] = str(normalized.get("category", "uncategorized")).strip() or "uncategorized"
+    normalized["user_intent"] = _normalize_user_intent(normalized.get("user_intent", ""))
     normalized["updated_at"] = str(normalized.get("updated_at") or _now_iso())
     return normalized
 
@@ -120,8 +128,8 @@ def set_ai_task_user_intent(
     user_intent: str,
 ) -> tuple[str, dict[str, Any], bool]:
     updated_description, task_payload, changed = ensure_ai_task_block(description, defaults)
-    normalized_intent = str(user_intent or "").strip()
-    if str(task_payload.get("user_intent", "")).strip() == normalized_intent:
+    normalized_intent = _normalize_user_intent(user_intent)
+    if _normalize_user_intent(task_payload.get("user_intent", "")) == normalized_intent:
         return updated_description, task_payload, changed
     task_payload["user_intent"] = normalized_intent
     task_payload["updated_at"] = _now_iso()

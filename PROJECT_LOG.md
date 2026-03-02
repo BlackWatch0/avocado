@@ -38,6 +38,7 @@
 - 若存在同名托管日历（stage/user）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
 - 管理页面支持中英文双语；默认按浏览器语言自动选择，用户可手动切换并持久化偏好。
 - AI 改动仅作用于 `user_intent` 非空的事件；无意图事件即使 AI 返回变更也会被跳过并记录审计。
+- AI 规划请求仅把 `user_intent` 非空且未锁定事件作为 `target_events`；其余可编辑事件在规划负载中按约束事件处理（`locked=true, mandatory=true`），降低误改与 token 浪费。
 - 定时同步（`trigger=scheduled`）在 planning payload 未变化时跳过 AI 请求，并记录 `skip_ai_same_payload` 审计，避免重复消耗 token。
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
@@ -60,6 +61,8 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-02-27 | 修复“简介型意图”误改时间导致事件看似丢失 | `avocado/sync_engine.py`, `tests/test_sync_engine_helpers.py` | 新增意图语义防护：当 `user_intent` 属于“写入简介/描述”等文本型请求且不包含明确改时关键词时，自动屏蔽 AI 对 `start/end` 的变更，仅允许描述类字段更新；新增审计事件 `ai_change_time_blocked_description_intent` 便于追踪。针对 `run_id=248` 的异常定位为“被改到 2026-02-27 00:00”，并非删除。 | 风险低；若用户希望在同一意图中既改简介又改时间，需明确写出时间变更指令（如“提前30分钟”），否则时间改动会被拦截。 | AVO-046 |
+| 2026-02-27 | 三日历端到端用例集增强 + AI 目标事件过滤修复 | `avocado/user_case_runner.py`, `tests/fixtures/user_cases_zh.json`, `avocado/sync_engine.py`, `avocado/planner.py`, `avocado/task_block.py`, `tests/test_sync_engine_helpers.py`, `tests/test_sync_engine_invalid_datetime.py`, `tests/test_task_block.py` | 新增 UTF-8 中文真实用例运行器（默认 `tests/fixtures/user_cases_zh.json`），每条用例同时校验 `stage/user/intake` 三日历状态；新增 `intake -> user -> stage` 迁移验证。同步引擎改为仅对 `user_intent` 目标事件请求 AI，非目标事件在 payload 中作为锁定约束，且无目标事件时直接跳过 AI 调用；同时统一 `user_intent` 的 `null/None` 归一化为空字符串。`manual-window` 实测通过：`run_id=226`，6/6 用例通过。 | 风险低；AI 调用目标更聚焦，若需要“全量重排”可后续加显式模式开关；回滚可恢复原 `all_events` 直传策略。 | AVO-045 |
 | 2026-02-27 | 新增真实环境 E2E 测试集：读写配置 + 触发 Sync + 校验 AI 与固定日程 + 落盘日志 | `avocado/e2e_sync_suite.py`, `README.md` | 新增 `python -m avocado.e2e_sync_suite`：读取 `config.yaml`，执行配置写读回环测试；创建临时测试事件（可编辑与锁定）；触发 `manual-window` 全链路同步；校验 AI 是否执行移动指令、锁定日程是否不变、immutable 源日程是否镜像到用户层；自动清理测试事件；将完整过程写入 `data/test_logs/` 并输出 JSON 汇总 | 风险中等；脚本会在测试环境真实写入并删除日历事件，请勿在生产环境直接运行 | AVO-044 |
 | 2026-02-27 | 新增自动联调脚本：读取现网 `config.yaml` 一键检查 | `avocado/smoke_test.py`, `README.md` | 新增 `python -m avocado.smoke_test`：自动校验 CalDAV 连接/日历读取、AI 连通性与模型列表；可选 `--run-sync` 直接执行一次 `manual-window` 同步并输出变更/冲突；支持自定义窗口与跳过单侧检查 | 风险低；`--run-sync` 会写入测试环境数据，生产环境请谨慎 | AVO-043 |
 | 2026-02-27 | 修复 Class Schedule 未同步到用户层：immutable 日历镜像到 user-layer | `avocado/sync_engine.py`, `tests/test_sync_engine_run_once.py` | immutable 日历事件不再仅用于规划约束，同时会以 `locked=true` 镜像到用户层（使用 namespaced UID），并随源事件变更自动更新；仍保持源 immutable 日历只读不回写 | 风险中等；若用户同时订阅源 immutable 日历与用户层，可能在客户端看到“源+镜像”双份展示，可按需隐藏源日历 | AVO-042 |
@@ -113,6 +116,8 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-046 | 248 号运行“简介意图误改时间”防护修复 | Done | 当意图为描述型请求时，AI 不得改动 `start/end`；审计可见拦截事件；`run_id=248` 场景复盘确认并非删除而是误改到午夜 | P0 | AVO-045 | 2026-02-27 |
+| AVO-045 | 三日历真实用例校验与 AI 目标过滤修复 | Done | 用例集覆盖 user/intake 输入及 stage/user/intake 三日历断言；无 `user_intent` 时不发 AI；“提前30分钟”意图在真实环境稳定命中并通过 | P0 | AVO-022, AVO-040, AVO-044 | 2026-02-27 |
 | AVO-044 | 真实环境 E2E 同步测试集与日志落盘 | Done | 一条命令覆盖配置读写、固定日程保护、AI 移动指令执行、immutable 镜像校验并自动清理；全程有文件日志与 JSON 汇总 | P0 | AVO-043, AVO-042 | 2026-02-27 |
 | AVO-043 | 自动联调脚本（读取现网 config） | Done | 使用一条命令完成 CalDAV/AI/配置检查，并可选执行一次真实同步；输出结构化结果用于快速定位环境问题 | P1 | AVO-040 | 2026-02-27 |
 | AVO-042 | immutable 日历同步到用户层镜像 | Done | `Class Schedule` 等 immutable 日历事件在用户层可见并随源更新；源 immutable 日历保持只读不被回写 | P0 | AVO-041 | 2026-02-27 |

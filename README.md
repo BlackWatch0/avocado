@@ -169,3 +169,15 @@ Admin page behavior:
 - Test logs:
   - saved under `data/test_logs/e2e_sync_suite_<timestamp>.log`
   - script also prints JSON summary to stdout
+
+### User Case Runner (UTF-8 Chinese cases, validates stage/user/intake)
+
+- Run with default fixture:
+  - `python -m avocado.user_case_runner`
+- Run with a custom case file:
+  - `python -m avocado.user_case_runner --cases tests/fixtures/user_cases_zh.json`
+- What it validates for each case:
+  - behavior expectation (move earlier / locked unchanged / description-only / intake import)
+  - calendar assertions: event exists in `user` + `stage`, raw uid removed from `intake`
+- Logs:
+  - saved under `data/test_logs/user_cases_<timestamp>.json`

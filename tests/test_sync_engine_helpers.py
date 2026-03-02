@@ -7,6 +7,8 @@ from avocado.sync_engine import (
     _event_has_user_intent,
     _extract_user_intent,
     _extract_editable_fields,
+    _intent_prefers_description_only,
+    _intent_requests_time_change,
     _managed_uid_prefix_depth,
     _normalize_calendar_name,
     _purge_duplicate_calendar_events,
@@ -49,6 +51,14 @@ class SyncEngineHelperTests(unittest.TestCase):
         self.assertFalse(_event_has_user_intent(event_without_intent))
         self.assertTrue(_event_has_user_intent(event_with_intent))
 
+    def test_event_has_user_intent_with_yaml_null(self) -> None:
+        event_with_null_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-null",
+            description="[AI Task]\nlocked: false\nmandatory: false\nuser_intent:\n[/AI Task]",
+        )
+        self.assertFalse(_event_has_user_intent(event_with_null_intent))
+
     def test_event_has_user_intent_with_invalid_yaml_fallback(self) -> None:
         event_with_non_yaml_intent = EventRecord(
             calendar_id="cal",
@@ -83,6 +93,24 @@ class SyncEngineHelperTests(unittest.TestCase):
             description="[AI Task]\nuser_intent: move earlier by 30 minutes\n[/AI Task]",
         )
         self.assertEqual(_extract_user_intent(event_with_intent), "move earlier by 30 minutes")
+
+    def test_extract_user_intent_with_yaml_null(self) -> None:
+        event_with_null_intent = EventRecord(
+            calendar_id="cal",
+            uid="uid-null",
+            description="[AI Task]\nuser_intent:\n[/AI Task]",
+        )
+        self.assertEqual(_extract_user_intent(event_with_null_intent), "")
+
+    def test_intent_time_change_detection(self) -> None:
+        self.assertTrue(_intent_requests_time_change("提前30分钟"))
+        self.assertTrue(_intent_requests_time_change("move earlier by 30 minutes"))
+        self.assertTrue(_intent_requests_time_change("改到15:30"))
+        self.assertFalse(_intent_requests_time_change("帮我补充到简介里"))
+
+    def test_intent_prefers_description_only(self) -> None:
+        self.assertTrue(_intent_prefers_description_only("帮我安排一套60分钟方案放在简介"))
+        self.assertFalse(_intent_prefers_description_only("提前30分钟，放在简介"))
 
 
 class _FakeCalDAVService:

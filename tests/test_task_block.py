@@ -49,6 +49,13 @@ class TaskBlockTests(unittest.TestCase):
         self.assertIn(AI_TASK_START, updated)
         self.assertEqual(payload["category"], "study")
 
+    def test_ensure_block_normalizes_null_user_intent(self) -> None:
+        description = "Task\n\n[AI Task]\nlocked: false\nuser_intent:\n[/AI Task]"
+        updated, payload, changed = ensure_ai_task_block(description, self.defaults)
+        self.assertTrue(changed)
+        self.assertEqual(payload["user_intent"], "")
+        self.assertIn("user_intent: ''", updated)
+
 
 if __name__ == "__main__":
     unittest.main()

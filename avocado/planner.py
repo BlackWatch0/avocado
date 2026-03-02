@@ -13,8 +13,9 @@ def build_planning_payload(
     window_start: str,
     window_end: str,
     timezone: str,
+    target_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "window": {
             "start": window_start,
             "end": window_end,
@@ -23,6 +24,9 @@ def build_planning_payload(
         "immutable_calendar_ids": immutable_calendar_ids,
         "events": [event.to_dict() for event in events],
     }
+    if target_events:
+        payload["target_events"] = target_events
+    return payload
 
 
 def build_messages(payload: dict[str, Any], system_prompt: str | None = None) -> list[dict[str, str]]:

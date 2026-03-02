@@ -141,10 +141,17 @@ def _event_fingerprint(event: EventRecord) -> str:
     )
 
 
+def _normalize_intent_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.casefold() in {"", "\"\"", "''", "null", "none", "~"}:
+        return ""
+    return text
+
+
 def _event_has_user_intent(event: EventRecord) -> bool:
     parsed = parse_ai_task_block(event.description or "")
     if isinstance(parsed, dict):
-        return bool(str(parsed.get("user_intent", "")).strip())
+        return bool(_normalize_intent_value(parsed.get("user_intent", "")))
 
     # Fallback for manually edited blocks that are temporarily invalid YAML.
     description = event.description or ""
@@ -155,16 +162,13 @@ def _event_has_user_intent(event: EventRecord) -> bool:
     intent_match = re.search(r"^\s*user_intent\s*:\s*(.+)\s*$", raw_block, re.MULTILINE)
     if not intent_match:
         return False
-    value = intent_match.group(1).strip()
-    if value in {"", "\"\"", "''", "null", "None", "~"}:
-        return False
-    return True
+    return bool(_normalize_intent_value(intent_match.group(1)))
 
 
 def _extract_user_intent(event: EventRecord) -> str:
     parsed = parse_ai_task_block(event.description or "")
     if isinstance(parsed, dict):
-        return str(parsed.get("user_intent", "")).strip()
+        return _normalize_intent_value(parsed.get("user_intent", ""))
     description = event.description or ""
     block_match = re.search(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", description, re.DOTALL)
     if not block_match:
@@ -173,10 +177,7 @@ def _extract_user_intent(event: EventRecord) -> str:
     intent_match = re.search(r"^\s*user_intent\s*:\s*(.+)\s*$", raw_block, re.MULTILINE)
     if not intent_match:
         return ""
-    value = intent_match.group(1).strip()
-    if value in {"", "\"\"", "''", "null", "None", "~"}:
-        return ""
-    return value
+    return _normalize_intent_value(intent_match.group(1))
 
 
 def _extract_editable_fields(event: EventRecord, fallback_fields: list[str]) -> list[str]:
@@ -188,6 +189,62 @@ def _extract_editable_fields(event: EventRecord, fallback_fields: list[str]) -> 
             if cleaned:
                 return cleaned
     return [str(field).strip() for field in fallback_fields if str(field).strip()]
+
+
+def _intent_requests_time_change(intent: str) -> bool:
+    text = str(intent or "").strip()
+    if not text:
+        return False
+    lowered = text.casefold()
+    keyword_hits = [
+        "提前",
+        "延后",
+        "推迟",
+        "改到",
+        "挪到",
+        "时间",
+        "before",
+        "after",
+        "earlier",
+        "later",
+        "move",
+        "shift",
+        "reschedule",
+        "around",
+        "at ",
+    ]
+    if any(token in lowered for token in keyword_hits):
+        return True
+    if re.search(r"\b\d{1,2}:\d{2}\b", text):
+        return True
+    if re.search(r"\b\d{1,2}\s*(am|pm)\b", lowered):
+        return True
+    if re.search(r"\d+\s*点", text):
+        return True
+    if re.search(
+        r"(提前|延后|推迟|后移|前移|before|after|earlier|later)\s*\d+\s*(分钟|小时|min|hour)",
+        lowered,
+    ):
+        return True
+    return False
+
+
+def _intent_prefers_description_only(intent: str) -> bool:
+    text = str(intent or "").strip()
+    if not text:
+        return False
+    lowered = text.casefold()
+    description_keywords = [
+        "简介",
+        "描述",
+        "备注",
+        "说明",
+        "description",
+        "note",
+        "notes",
+        "summary",
+    ]
+    return any(token in lowered for token in description_keywords) and not _intent_requests_time_change(text)
 
 
 def _infer_category(event: EventRecord, change: dict[str, Any]) -> str:
@@ -729,7 +786,7 @@ class SyncEngine:
                             task_defaults,
                         )
                         # Immutable calendars are constraints only; clear stale intent to avoid AI targeting them.
-                        if str(task_payload.get("user_intent", "")).strip():
+                        if _normalize_intent_value(task_payload.get("user_intent", "")):
                             new_description, task_payload, intent_cleared = set_ai_task_user_intent(
                                 new_description,
                                 task_defaults,
@@ -779,7 +836,7 @@ class SyncEngine:
                                 mirror_event.description,
                                 immutable_user_defaults,
                             )
-                            if str(mirror_task_payload.get("user_intent", "")).strip():
+                            if _normalize_intent_value(mirror_task_payload.get("user_intent", "")):
                                 mirror_description, mirror_task_payload, _ = set_ai_task_user_intent(
                                     mirror_description,
                                     immutable_user_defaults,
@@ -957,7 +1014,7 @@ class SyncEngine:
                     editable_fields=list(config.task_defaults.editable_fields),
                 )
                 new_description, task_payload, changed = ensure_ai_task_block(user_event.description, task_defaults)
-                if user_event.locked and str(task_payload.get("user_intent", "")).strip():
+                if user_event.locked and _normalize_intent_value(task_payload.get("user_intent", "")):
                     new_description, task_payload, intent_cleared = set_ai_task_user_intent(
                         new_description,
                         task_defaults,
@@ -996,13 +1053,43 @@ class SyncEngine:
 
             ai_client = OpenAICompatibleClient(config.ai)
             raw_changes: list[dict[str, Any]] = []
+            intent_target_keys: set[tuple[str, str]] = {
+                key
+                for key, event in mutable_events.items()
+                if (not event.locked) and _event_has_user_intent(event)
+            }
+            planning_events: list[EventRecord] = []
+            for event in all_events:
+                event_key = (event.calendar_id, event.uid)
+                if event_key in mutable_events and event_key not in intent_target_keys:
+                    # Non-target mutable events are constraints only in this planning pass.
+                    planning_events.append(event.with_updates(locked=True, mandatory=True))
+                else:
+                    planning_events.append(event)
+            target_events_payload: list[dict[str, Any]] = []
+            for key in sorted(intent_target_keys):
+                target_event = mutable_events.get(key)
+                if target_event is None:
+                    continue
+                target_events_payload.append(
+                    {
+                        "calendar_id": target_event.calendar_id,
+                        "uid": target_event.uid,
+                        "user_intent": _extract_user_intent(target_event),
+                        "editable_fields": _extract_editable_fields(
+                            target_event,
+                            list(config.task_defaults.editable_fields),
+                        ),
+                    }
+                )
             if ai_client.is_configured() and should_replan:
                 planning_payload = build_planning_payload(
-                    events=all_events,
+                    events=planning_events,
                     immutable_calendar_ids=sorted(immutable_calendar_ids),
                     window_start=serialize_datetime(window_start) or "",
                     window_end=serialize_datetime(window_end) or "",
                     timezone=config.sync.timezone,
+                    target_events=target_events_payload,
                 )
                 # Skip scheduled AI calls when planning payload is unchanged.
                 if trigger == "scheduled":
@@ -1020,7 +1107,7 @@ class SyncEngine:
                         should_replan = False
                     else:
                         self.state_store.set_meta("last_planning_payload_fingerprint", payload_fingerprint)
-            if ai_client.is_configured() and should_replan:
+            if ai_client.is_configured() and should_replan and intent_target_keys:
                 messages = build_messages(planning_payload, system_prompt=config.ai.system_prompt)
                 ai_request_payload = {
                     "model": config.ai.model,
@@ -1037,7 +1124,8 @@ class SyncEngine:
                         "trigger": trigger,
                         "request_bytes": ai_request_bytes,
                         "messages_count": len(messages),
-                        "events_count": len(all_events),
+                        "events_count": len(planning_events),
+                        "target_events_count": len(target_events_payload),
                     },
                     run_id=run_id,
                 )
@@ -1061,13 +1149,22 @@ class SyncEngine:
                     action="skip_ai_not_configured",
                     details={},
                 )
+            elif not intent_target_keys:
+                _audit(
+                    calendar_id="system",
+                    uid="ai",
+                    action="skip_ai_no_intent_targets",
+                    details={
+                        "events_count": len(planning_events),
+                    },
+                )
             else:
                 _audit(
                     calendar_id="system",
                     uid="ai",
                     action="skip_ai_no_replan_needed",
                     details={
-                        "events_count": len(all_events),
+                        "events_count": len(planning_events),
                     },
                 )
 
@@ -1128,6 +1225,22 @@ class SyncEngine:
 
                 key = (event.calendar_id, event.uid)
                 editable_fields = _extract_editable_fields(event, list(config.task_defaults.editable_fields))
+                intent_text = _extract_user_intent(event)
+                if _intent_prefers_description_only(intent_text):
+                    if ("start" in change or "end" in change) and (
+                        "start" in editable_fields or "end" in editable_fields
+                    ):
+                        self.state_store.record_audit_event(
+                            calendar_id=event.calendar_id,
+                            uid=event.uid,
+                            action="ai_change_time_blocked_description_intent",
+                            details={
+                                "trigger": trigger,
+                                "editable_fields_before": editable_fields,
+                            },
+                            run_id=run_id,
+                        )
+                    editable_fields = [field for field in editable_fields if field not in {"start", "end"}]
                 _audit(
                     calendar_id=event.calendar_id,
                     uid=event.uid,
