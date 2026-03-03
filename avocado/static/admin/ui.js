@@ -14,10 +14,13 @@ export const setActiveTab = (dom, panel) => {
   dom.panelEls.forEach((el) => {
     el.style.display = el.getAttribute("data-panel") === panel ? "" : "none";
   });
-  [dom.tabConfigBtn, dom.tabCalendarsBtn, dom.tabLogsBtn].forEach((btn) => btn.classList.remove("active"));
-  if (panel === "config") dom.tabConfigBtn.classList.add("active");
-  if (panel === "calendars") dom.tabCalendarsBtn.classList.add("active");
-  if (panel === "logs") dom.tabLogsBtn.classList.add("active");
+  [dom.tabConfigBtn, dom.tabAiBtn, dom.tabCalendarsBtn, dom.tabLogsBtn].forEach((btn) => {
+    if (btn) btn.classList.remove("active");
+  });
+  if (panel === "config" && dom.tabConfigBtn) dom.tabConfigBtn.classList.add("active");
+  if (panel === "ai" && dom.tabAiBtn) dom.tabAiBtn.classList.add("active");
+  if (panel === "calendars" && dom.tabCalendarsBtn) dom.tabCalendarsBtn.classList.add("active");
+  if (panel === "logs" && dom.tabLogsBtn) dom.tabLogsBtn.classList.add("active");
 };
 
 export const withPending = (el, pending) => {

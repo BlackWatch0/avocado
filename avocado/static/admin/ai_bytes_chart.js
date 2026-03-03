@@ -66,6 +66,7 @@
     .map((p, idx) => (p.flexUsed && p.tokens > 0 ? idx : -1))
     .filter((idx) => idx >= 0);
   const greenSegments = Array(Math.max(0, points.length - 1)).fill(false);
+  const greenPointIndexes = new Set();
   const greenSpans = [];
   for (let i = 1; i < successFlexIndexes.length; i += 1) {
     const start = successFlexIndexes[i - 1];
@@ -81,7 +82,30 @@
     for (let seg = start + 1; seg <= end; seg += 1) {
       greenSegments[seg - 1] = true;
     }
+    for (let idx = start; idx <= end; idx += 1) {
+      greenPointIndexes.add(idx);
+    }
     greenSpans.push([start, end]);
+  }
+
+  if (successFlexIndexes.length > 0) {
+    const lastFlex = successFlexIndexes[successFlexIndexes.length - 1];
+    let trailingAllZero = true;
+    for (let k = lastFlex + 1; k < points.length; k += 1) {
+      if ((points[k]?.tokens || 0) > 0) {
+        trailingAllZero = false;
+        break;
+      }
+    }
+    if (trailingAllZero && lastFlex < points.length - 1) {
+      for (let seg = lastFlex + 1; seg < points.length; seg += 1) {
+        greenSegments[seg - 1] = true;
+      }
+      for (let idx = lastFlex; idx < points.length; idx += 1) {
+        greenPointIndexes.add(idx);
+      }
+      greenSpans.push([lastFlex, points.length - 1]);
+    }
   }
 
   ctx.strokeStyle = "#93c5fd";
@@ -106,7 +130,7 @@
   } else {
     greenSpans.forEach(([start, end]) => {
       if (end <= start) return;
-      ctx.fillStyle = "rgba(22, 163, 74, 0.14)";
+      ctx.fillStyle = "rgba(22, 163, 74, 0.24)";
       ctx.beginPath();
       ctx.moveTo(coords[start].x, yBase);
       for (let idx = start; idx <= end; idx += 1) {
@@ -134,8 +158,9 @@
   points.forEach((p, idx) => {
     const x = coords[idx].x;
     const y = coords[idx].y;
+    const pointInFlexSpan = greenPointIndexes.has(idx);
     const successFlex = !!p.flexUsed && p.tokens > 0;
-    ctx.fillStyle = successFlex ? "#16a34a" : "#1d4ed8";
+    ctx.fillStyle = successFlex || pointInFlexSpan ? "#16a34a" : "#1d4ed8";
     ctx.beginPath();
     ctx.arc(x, y, 2.4, 0, Math.PI * 2);
     ctx.fill();

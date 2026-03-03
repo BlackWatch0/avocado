@@ -7,6 +7,7 @@ from avocado.task_block import (
     ai_task_payload_from_description,
     ensure_ai_task_block,
     parse_ai_task_block,
+    set_ai_task_locked,
     strip_ai_task_block,
 )
 
@@ -67,6 +68,49 @@ class TaskBlockTests(unittest.TestCase):
         updated, payload, changed = ensure_ai_task_block(description, self.defaults)
         self.assertTrue(changed)
         self.assertTrue(payload["locked"])
+        self.assertIn("locked: true", updated)
+        self.assertNotIn(".lock", updated)
+
+    def test_locked_field_supports_multiple_boolean_forms(self) -> None:
+        truthy_values = ["1", "T", "t", "true", "TRUE"]
+        falsy_values = ["0", "F", "f", "false", "FALSE", "Fause", "fause"]
+        for raw in truthy_values:
+            description = f"[AI Task]\nlocked: {raw}\nuser_intent: ''\n[/AI Task]"
+            _, payload, _ = ensure_ai_task_block(description, self.defaults)
+            self.assertTrue(payload["locked"], msg=f"expected truthy for {raw}")
+        for raw in falsy_values:
+            description = f"[AI Task]\nlocked: {raw}\nuser_intent: ''\n[/AI Task]"
+            _, payload, _ = ensure_ai_task_block(description, self.defaults)
+            self.assertFalse(payload["locked"], msg=f"expected falsy for {raw}")
+
+    def test_ensure_block_extracts_dot_m_user_intent_and_removes_marker(self) -> None:
+        description = "打游戏\n.m 推迟30分钟"
+        updated, payload, changed = ensure_ai_task_block(description, self.defaults)
+        self.assertTrue(changed)
+        self.assertEqual(payload["user_intent"], "推迟30分钟")
+        self.assertIn("user_intent: 推迟30分钟", updated)
+        self.assertNotIn(".m 推迟30分钟", updated)
+
+    def test_ensure_block_supports_uppercase_dot_m(self) -> None:
+        description = "Review notes\n.M move to tomorrow 10am"
+        updated, payload, changed = ensure_ai_task_block(description, self.defaults)
+        self.assertTrue(changed)
+        self.assertEqual(payload["user_intent"], "move to tomorrow 10am")
+        self.assertNotIn(".M move to tomorrow 10am", updated)
+
+    def test_ensure_block_removes_orphan_ai_task_marker_before_upsert(self) -> None:
+        description = "内容正文\n\n[AI Task]"
+        updated, payload, changed = ensure_ai_task_block(description, self.defaults)
+        self.assertTrue(changed)
+        self.assertEqual(payload["user_intent"], "")
+        self.assertEqual(updated.count("[AI Task]"), 1)
+        self.assertEqual(updated.count("[/AI Task]"), 1)
+
+    def test_set_ai_task_locked_updates_locked_flag(self) -> None:
+        description = "Task body\n\n[AI Task]\nlocked: false\nuser_intent: ''\n[/AI Task]"
+        updated, payload, changed = set_ai_task_locked(description, self.defaults, True)
+        self.assertTrue(changed)
+        self.assertTrue(bool(payload.get("locked")))
         self.assertIn("locked: true", updated)
 
 

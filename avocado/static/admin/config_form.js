@@ -16,6 +16,10 @@
   document.getElementById("ai-high-load-model").value = cfg.ai?.high_load_model || "";
   document.getElementById("ai-high-load-event-threshold").value =
     cfg.ai?.high_load_event_threshold ?? 0;
+  const highLoadAutoEnabledEl = document.getElementById("ai-high-load-auto-enabled");
+  if (highLoadAutoEnabledEl) {
+    highLoadAutoEnabledEl.checked = !!cfg.ai?.high_load_auto_enabled;
+  }
   document.getElementById("ai-high-load-use-flex").checked = !!cfg.ai?.high_load_use_flex;
   document.getElementById("ai-high-load-flex-fallback-auto").checked =
     cfg.ai?.high_load_flex_fallback_to_auto !== false;
@@ -54,7 +58,6 @@
   document.getElementById("rules-new-calendar-name").value =
     cfg.calendar_rules?.new_calendar_name || "";
 
-  document.getElementById("task-locked").checked = !!cfg.task_defaults?.locked;
   document.getElementById("task-editable-fields").value = joinList(
     cfg.task_defaults?.editable_fields || []
   );
@@ -87,6 +90,7 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
       model: document.getElementById("ai-model").value.trim(),
       high_load_model: document.getElementById("ai-high-load-model").value.trim(),
       high_load_event_threshold: highLoadEventThreshold,
+      high_load_auto_enabled: !!document.getElementById("ai-high-load-auto-enabled")?.checked,
       high_load_use_flex: document.getElementById("ai-high-load-use-flex").checked,
       high_load_flex_fallback_to_auto: document.getElementById("ai-high-load-flex-fallback-auto").checked,
       timeout_seconds: timeoutSeconds,
@@ -109,7 +113,7 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
       locked_calendar_ids: readLockedSourceCalendarIds(),
     },
     task_defaults: {
-      locked: document.getElementById("task-locked").checked,
+      locked: false,
       editable_fields: splitByComma(document.getElementById("task-editable-fields").value),
     },
   };

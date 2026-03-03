@@ -14,6 +14,7 @@
   refreshAiBytesBtn: document.getElementById("refresh-ai-bytes-btn"),
   aiBytesDaysInput: document.getElementById("ai-bytes-days"),
   tabConfigBtn: document.getElementById("tab-config"),
+  tabAiBtn: document.getElementById("tab-ai"),
   tabCalendarsBtn: document.getElementById("tab-calendars"),
   tabLogsBtn: document.getElementById("tab-logs"),
   langSelect: document.getElementById("lang-select"),

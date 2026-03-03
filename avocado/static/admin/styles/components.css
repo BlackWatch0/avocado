@@ -13,6 +13,23 @@
   pointer-events: none;
 }
 
+.hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 6px;
+  cursor: help;
+  user-select: none;
+  line-height: 1;
+}
+
 .ai-changes-list {
   padding: 10px 12px 12px;
   display: grid;

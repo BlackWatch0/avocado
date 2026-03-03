@@ -62,6 +62,14 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-03-03 | `new` 队列中断恢复：非空即继续入栈并触发 AI | `avocado/sync/pipeline.py`, `tests/test_sync_engine_invalid_datetime.py` | 修复 `new` 中已有历史 mapping 的事件被遗漏问题；`new` 非空（窗口内）时会强制重新入栈并加入 AI 目标，不再被 `same_input_hash` 跳过，确保中断后可恢复处理 | 风险低；若 `new` 清理连续失败，会持续触发 AI（符合“直到处理完成”为止） | AVO-090 |
+| 2026-03-03 | 来源日历锁定传播修复（配置变更同步到事件块） | `avocado/sync/pipeline.py`, `avocado/task_block.py`, `tests/test_task_block.py`, `tests/test_sync_engine_source_layer.py` | 修复来源锁定未正确落到 `[AI Task].locked` 的问题：同步时会按 `event.locked` 强制回写任务块锁定值；用户层合并不会覆盖外部锁定来源；日历名含 `[L]` 也会在同步时视为锁定来源，确保管理页改动可传递到已有事件 | 风险低；若用户需要手工覆盖来源锁定，应先取消来源锁定再编辑单事件 | AVO-089 |
+| 2026-03-03 | 防止孤立 `[AI Task]` 标记导致双块 | `avocado/task_block.py`, `tests/test_task_block.py` | 当描述中存在孤立的 `[AI Task]`/`[/AI Task]` 行（无完整块）时，写回前会自动清理，再注入规范块，避免出现“空标记+完整块”重复结构 | 风险低；若用户正文确实想保留该字面行会被清理 | AVO-088 |
+| 2026-03-03 | 前端模块缓存兼容修复（语言/配置加载失败） | `avocado/static/admin/index.js`, `avocado/static/admin/ui.js`, `avocado/templates/admin.html` | 为 ESM 子模块导入统一追加版本参数，避免浏览器缓存导致新旧脚本混用；Tab 事件与激活逻辑增加空值保护，防止初始化崩溃造成“默认英文+配置不加载” | 风险低；若需回滚可去掉导入版本参数并恢复旧脚本版本号 | AVO-087 |
+| 2026-03-03 | 管理页：`[L]` 自动锁定识别 + AI 独立标签页 + 移除任务默认锁定项 | `avocado/web_admin/routes/calendars.py`, `avocado/templates/admin.html`, `avocado/static/admin/{dom.js,ui.js,index.js,config_form.js,i18n.js}`, `config.example.yaml`, `tests/test_web_admin.py` | 日历名含 `[L]` 时后台自动标记 `source_locked`；管理页新增 AI 标签页并将 AI/Prompt 区块独立；任务默认值不再提供 `locked` 配置项（保存时固定为 `false`） | 风险低；旧配置里 `task_defaults.locked` 会在下一次后台保存后被重置为 `false` | AVO-086 |
+| 2026-03-03 | 自动高负载改为“仅开关”+ 悬浮算法说明 | `avocado/templates/admin.html`, `avocado/static/admin/config_form.js`, `avocado/static/admin/index.js`, `avocado/static/admin/i18n.js`, `avocado/static/admin/styles/components.css` | 管理页移除自动高负载阈值/基线可调输入，仅保留开关；开关旁新增圆形 `i` 提示，悬浮显示简版计算方式说明（中英文） | 风险低；已有配置中的自动阈值仍可由配置文件保留，不再在 UI 调整 | AVO-085 |
+| 2026-03-03 | `.m` 指令解析为 `user_intent` | `avocado/task_block.py`, `tests/test_task_block.py` | 首次注入 `[AI Task]` 时，描述中的独立行 `.m <message>` 会自动提取为 `user_intent`，并从可见正文移除，减少用户手工编辑块内容 | 风险低；若不希望触发可避免使用 `.m ` 前缀独立行 | AVO-084 |
+| 2026-03-03 | 高负载自动判定算法（密度/数量/冲突） | `avocado/sync/pipeline.py`, `avocado/core/models/config.py`, `avocado/templates/admin.html`, `avocado/static/admin/config_form.js`, `avocado/static/admin/i18n.js`, `config.example.yaml`, `README.md`, `tests/test_models.py`, `tests/test_sync_engine_invalid_datetime.py` | 新增自动高负载评分：按窗口占用密度、事件数量、时间冲突综合打分；支持后台开关与阈值配置（`high_load_auto_*`）；满足条件时可自动切换高负载模型并联动 Flex | 风险低；若触发过于频繁，可关闭 `high_load_auto_enabled` 或提高 `high_load_auto_score_threshold` | AVO-083 |
 | 2026-03-03 | 防重复触发修复：AI 成功改动后消费意图 + 后态哈希去重 | `avocado/sync/pipeline.py`, `tests/test_ai_request_audit.py` | 仅对“成功应用 AI 改动”的事件清空 `user_intent`；`last_applied_ai_hash` 改为记录 AI 应用后的最终状态，避免下一轮因 AI 自身写回再次触发 | 风险低；若希望同一意图持续生效需再次填写 `user_intent`，回滚可恢复旧哈希策略与清空时机 | AVO-064 |
 | 2026-03-03 | AI payload 重构：本地解析 `[AI Task]` 并提升字段 | `avocado/sync/pipeline.py`, `avocado/task_block.py`, `avocado/planner.py`, `avocado/core/models/ai_task_fields.py`, `tests/test_task_block.py`, `tests/test_ai_request_audit.py` | 发送给 AI 的 `description` 改为仅正文；`[AI Task]` 解析后拆为 `ai_task`（`locked/category/user_intent`）与 `x-*` 元字段（`x-version/x-editable_fields/x-updated_at`）；同时只发 Stage 层并按 UID 去重，压缩 `calendar_id` 为短别名后回映射 | 风险中等；prompt 需适配新 payload 结构，回滚可恢复旧 `description` 内嵌 `[AI Task]` 传输 | AVO-063 |
 | 2026-03-03 | Prompt 独立存储并迁移到根目录 | `avocado/config_manager.py`, `docker-compose.yml`, `avocado/templates/admin.html`, `avocado/static/admin/i18n.js`, `README.md`, `config.example.yaml`, `tests/test_config_manager.py` | `ai.system_prompt` 从 `config.yaml` 分离到根目录 `ai_system_prompt.txt`（容器 `/app/ai_system_prompt.txt`）；首次读取可自动迁移旧配置/旧路径 `data/ai_system_prompt.txt`；后台单独 Prompt 区域可编辑 | 风险低；升级时需确保根目录 prompt 文件可写，回滚可改回 `config.yaml` 内嵌存储 | AVO-062 |
@@ -134,6 +142,17 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-090 | `new` 遗留事件恢复处理与强制触发 AI | Done | 当 `new` 中存在未清理遗留事件（含已有 mapping）时，下一轮仍会入栈并触发 AI；不再因 `same_input_hash` 跳过 | P0 | AVO-068 | 2026-03-03 |
+| AVO-089 | 来源日历锁定向事件 `[AI Task].locked` 传播 | Done | 管理页锁定来源后，下一轮同步会把对应已有/新增事件的任务块 `locked` 更新为 `true`；用户层合并不再回退该锁定；`[L]` 命名锁定在同步侧生效 | P0 | AVO-086 | 2026-03-03 |
+| AVO-088 | 清理孤立 `[AI Task]` 标记避免双块 | Done | AI 返回描述中若出现孤立 `[AI Task]` 行，系统写回前自动清理并仅保留一个规范块 | P0 | AVO-063 | 2026-03-03 |
+| AVO-087 | 前端模块缓存导致初始化失败修复 | Done | 新版 `index.js` 强制刷新所有子模块并兼容缺失 AI tab 元素，避免页面回退英文且配置加载失败 | P0 | AVO-086 | 2026-03-03 |
+| AVO-086 | 日历 `[L]` 自动锁定与 AI 标签页拆分 | Done | 日历名含 `[L]` 自动打上锁定来源；AI 设置与 Prompt 独立为 AI 标签页；任务默认值移除 `locked` 表单项 | P1 | AVO-085 | 2026-03-03 |
+| AVO-085 | 自动高负载参数 UI 收敛为仅开关 | Done | 后台仅提供自动高负载开关；移除评分阈值与事件基线输入；开关旁提供悬浮说明算法 | P2 | AVO-083 | 2026-03-03 |
+| AVO-084 | `.m` 快捷指令自动写入 `user_intent` | Done | 新建事件描述含独立行 `.m <message>` 时，首次打标签会自动提取为 `user_intent` 并移除该指令行 | P1 | AVO-067 | 2026-03-03 |
+| AVO-083 | 自动高负载判定（密度+数量+冲突） | Done | 可基于窗口内事件密度、事件数量、冲突比例自动计算高负载评分；达到阈值后自动启用高负载模型（并可联动 Flex）；后台可配置开关和阈值 | P1 | AVO-069, AVO-071 | 2026-03-03 |
+| AVO-082 | `.lock` 清理与 `locked` 多形态布尔解析 | Done | `.lock` 被识别后自动从正文移除；`locked` 支持 `0/1`、`T/F`（不区分大小写）及常见变体（含 `Fause`）并正确归一为布尔值 | P1 | AVO-077 | 2026-03-03 |
+| AVO-081 | Flex 右侧尾部 0 点着色延续 | Done | 若最近一次非零请求为成功 Flex，右侧新增的 0 点（及其连线/阴影）继续保持绿色，直到出现新的非零请求 | P2 | AVO-080 | 2026-03-03 |
+| AVO-080 | Flex 区间中间点着色与阴影加深 | Done | 两个成功 Flex 点之间若仅含 0 请求，中间所有点也渲染绿色；Flex 阴影不透明度提高，增强视觉强调 | P2 | AVO-079 | 2026-03-03 |
 | AVO-079 | Flex 区间连线扩展与面积阴影 | Done | 两个成功 Flex 点之间若无非零请求（中间全 0）则整段连线标绿；同区间下方填充淡绿色面积，提升趋势可读性 | P2 | AVO-078 | 2026-03-03 |
 | AVO-078 | AI Token 图 Flex 连线着色 | Done | 当相邻数据点均为成功 Flex 请求时，折线段渲染为绿色；非 Flex 段保持蓝色，点位着色规则保持一致 | P2 | AVO-074 | 2026-03-03 |
 | AVO-077 | 新建事件描述含 `.lock` 时自动锁定 | Done | 首次注入 `[AI Task]` 时若描述正文包含 `.lock` 标记，默认写入 `locked: true`，降低误调度风险 | P1 | AVO-067 | 2026-03-03 |

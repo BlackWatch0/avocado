@@ -8,6 +8,7 @@ from avocado.config_manager import ConfigManager
 from avocado.core.models import CalendarInfo, EventRecord
 from avocado.persistence.state_store import StateStore
 from avocado.sync import SyncEngine
+from avocado.task_block import parse_ai_task_block
 
 
 class _FakeCalDAVService:
@@ -158,8 +159,40 @@ class SyncEngineSourceLayerTests(unittest.TestCase):
         self.assertIn("[AI Task]", user_events[0].description)
         self.assertIn("[/AI Task]", user_events[0].description)
 
+    def test_locked_source_setting_propagates_to_existing_events(self) -> None:
+        fake_service = _FakeCalDAVService(object())
+
+        with mock.patch("avocado.sync.pipeline.CalDAVService", return_value=fake_service):
+            first = self.engine.run_once(trigger="manual")
+            self.assertEqual(first.status, "success")
+
+            stack_events_before = list(fake_service.events_by_calendar[_FakeCalDAVService.stack_calendar_id].values())
+            user_events_before = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())
+            self.assertTrue(stack_events_before and user_events_before)
+            self.assertFalse(bool(parse_ai_task_block(stack_events_before[0].description or "").get("locked")))
+            self.assertFalse(bool(parse_ai_task_block(user_events_before[0].description or "").get("locked")))
+
+            self.engine.config_manager.update(
+                {
+                    "calendar_rules": {
+                        "stack_calendar_id": _FakeCalDAVService.stack_calendar_id,
+                        "user_calendar_id": _FakeCalDAVService.user_calendar_id,
+                        "new_calendar_id": _FakeCalDAVService.new_calendar_id,
+                        "locked_calendar_ids": [_FakeCalDAVService.source_calendar_id],
+                    }
+                }
+            )
+
+            second = self.engine.run_once(trigger="manual")
+            self.assertEqual(second.status, "success")
+
+        stack_events_after = list(fake_service.events_by_calendar[_FakeCalDAVService.stack_calendar_id].values())
+        user_events_after = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())
+        self.assertTrue(stack_events_after and user_events_after)
+        self.assertTrue(bool(parse_ai_task_block(stack_events_after[0].description or "").get("locked")))
+        self.assertTrue(bool(parse_ai_task_block(user_events_after[0].description or "").get("locked")))
+
 
 if __name__ == "__main__":
     unittest.main()
-
 

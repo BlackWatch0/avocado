@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import re
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -17,8 +18,88 @@ from avocado.sync.helpers_intent import (
     _extract_editable_fields,
     _extract_user_intent,
 )
-from avocado.task_block import ai_task_payload_from_description, ensure_ai_task_block, set_ai_task_user_intent
+from avocado.task_block import (
+    ai_task_payload_from_description,
+    ensure_ai_task_block,
+    set_ai_task_locked,
+    set_ai_task_user_intent,
+)
 from avocado.timezone_utils import resolve_effective_timezone
+
+LOCK_NAME_PATTERN = re.compile(r"\[\s*l\s*\]", re.IGNORECASE)
+
+
+def _event_overlap(a: EventRecord, b: EventRecord) -> bool:
+    if a.start is None or a.end is None or b.start is None or b.end is None:
+        return False
+    if a.end <= a.start or b.end <= b.start:
+        return False
+    return a.start < b.end and b.start < a.end
+
+
+def _busy_seconds_in_window(events: list[EventRecord], window_start: datetime, window_end: datetime) -> float:
+    spans: list[tuple[datetime, datetime]] = []
+    for event in events:
+        if event.start is None or event.end is None:
+            continue
+        start = max(event.start, window_start)
+        end = min(event.end, window_end)
+        if end <= start:
+            continue
+        spans.append((start, end))
+    if not spans:
+        return 0.0
+    spans.sort(key=lambda item: item[0])
+    merged: list[tuple[datetime, datetime]] = []
+    cur_start, cur_end = spans[0]
+    for start, end in spans[1:]:
+        if start <= cur_end:
+            if end > cur_end:
+                cur_end = end
+            continue
+        merged.append((cur_start, cur_end))
+        cur_start, cur_end = start, end
+    merged.append((cur_start, cur_end))
+    return float(sum((end - start).total_seconds() for start, end in merged))
+
+
+def _compute_high_load_auto_metrics(
+    *,
+    planning_events: list[EventRecord],
+    window_start: datetime,
+    window_end: datetime,
+    event_baseline: int,
+    score_threshold: float,
+) -> dict[str, Any]:
+    event_count = len(planning_events)
+    window_seconds = max((window_end - window_start).total_seconds(), 1.0)
+    busy_seconds = _busy_seconds_in_window(planning_events, window_start, window_end)
+    density_ratio = min(1.0, max(0.0, busy_seconds / window_seconds))
+    count_ratio = min(1.0, max(0.0, float(event_count) / float(max(1, event_baseline))))
+
+    conflict_pairs = 0
+    conflicting_indexes: set[int] = set()
+    for idx in range(event_count):
+        for jdx in range(idx + 1, event_count):
+            if _event_overlap(planning_events[idx], planning_events[jdx]):
+                conflict_pairs += 1
+                conflicting_indexes.add(idx)
+                conflicting_indexes.add(jdx)
+    conflict_ratio = min(1.0, float(len(conflicting_indexes)) / float(max(1, event_count)))
+
+    score = (0.45 * density_ratio) + (0.35 * count_ratio) + (0.20 * conflict_ratio)
+    active = bool(score >= max(0.0, score_threshold))
+    return {
+        "active": active,
+        "score": round(score, 6),
+        "density_ratio": round(density_ratio, 6),
+        "count_ratio": round(count_ratio, 6),
+        "conflict_ratio": round(conflict_ratio, 6),
+        "event_count": int(event_count),
+        "event_baseline": int(max(1, event_baseline)),
+        "conflict_pairs": int(conflict_pairs),
+        "score_threshold": float(max(0.0, score_threshold)),
+    }
 
 
 class PipelineMixin:
@@ -202,6 +283,9 @@ class PipelineMixin:
             deleted_sync_ids: set[str] = set()
             newly_imported_sync_ids: set[str] = set()
             locked_source_calendar_ids = set(config.calendar_rules.locked_calendar_ids or [])
+            for calendar in external_calendars:
+                if LOCK_NAME_PATTERN.search(str(calendar.name or "")):
+                    locked_source_calendar_ids.add(str(calendar.calendar_id))
 
             for calendar in external_calendars:
                 for event in sorted(ext_window_events.get(calendar.calendar_id, []), key=lambda item: (item.uid or "", item.href or "")):
@@ -268,6 +352,11 @@ class PipelineMixin:
                     mapping=mapping,
                     stack_calendar_id=stack_info.calendar_id,
                 )
+                if (
+                    str(mapping.get("source", "")) == "ext"
+                    and str(mapping.get("source_calendar_id", "")) in locked_source_calendar_ids
+                ):
+                    stack_user_event.locked = True
                 existing = stack_state.get(sync_id)
                 if existing is None:
                     stack_state[sync_id] = stack_user_event
@@ -299,6 +388,11 @@ class PipelineMixin:
                     mapping=mapping,
                     stack_calendar_id=stack_info.calendar_id,
                 )
+                if (
+                    str(mapping.get("source", "")) == "ext"
+                    and str(mapping.get("source_calendar_id", "")) in locked_source_calendar_ids
+                ):
+                    stack_changed.locked = True
                 if sync_id not in stack_state:
                     stack_state[sync_id] = stack_changed
                 else:
@@ -333,10 +427,12 @@ class PipelineMixin:
             for item in new_delta.get("add_update", []):
                 if isinstance(item, EventRecord) and item.uid:
                     new_candidates[item.uid] = item
+            inbox_pending_count = 0
 
             for item in sorted(new_candidates.values(), key=lambda event: (event.uid or "", event.href or "")):
                 if not item.uid or not self._in_window(item, window_start, window_end):
                     continue
+                inbox_pending_count += 1
                 mapping = mapping_by_source.get(("new", new_info.calendar_id, item.uid))
                 if mapping is None:
                     mapping = self._ensure_mapping(
@@ -350,13 +446,13 @@ class PipelineMixin:
                         by_user_uid=mapping_by_user_uid,
                         by_stack_uid=mapping_by_stack_uid,
                     )
-                    sync_id = str(mapping["sync_id"])
-                    stack_state[sync_id] = self._stack_event_from_source(
-                        source_event=item,
-                        mapping=mapping,
-                        stack_calendar_id=stack_info.calendar_id,
-                    )
-                    newly_imported_sync_ids.add(sync_id)
+                sync_id = str(mapping["sync_id"])
+                stack_state[sync_id] = self._stack_event_from_source(
+                    source_event=item,
+                    mapping=mapping,
+                    stack_calendar_id=stack_info.calendar_id,
+                )
+                newly_imported_sync_ids.add(sync_id)
                 self.state_store.enqueue_pending_new_cleanup(
                     new_uid=item.uid,
                     new_href=item.href,
@@ -377,10 +473,17 @@ class PipelineMixin:
                 if event.uid and event.uid in seen_stage_uids:
                     continue
                 # Ensure managed layers always carry a normalized [AI Task] block.
-                normalized_description, _, description_changed = ensure_ai_task_block(
+                normalized_description, normalized_task, description_changed = ensure_ai_task_block(
                     event.description or "",
                     config.task_defaults,
                 )
+                if bool(normalized_task.get("locked", False)) != bool(event.locked):
+                    normalized_description, _, lock_changed = set_ai_task_locked(
+                        normalized_description,
+                        config.task_defaults,
+                        bool(event.locked),
+                    )
+                    description_changed = bool(description_changed or lock_changed)
                 if description_changed:
                     event.description = normalized_description
                 planning_events.append(event)
@@ -422,16 +525,29 @@ class PipelineMixin:
 
             ai_input_hash = _hash_text(json.dumps(hash_items, ensure_ascii=False, sort_keys=True))
             last_ai_hash = self.state_store.get_meta("last_applied_ai_hash")
+            force_ai_due_to_new_inbox = inbox_pending_count > 0
             raw_changes: list[dict[str, Any]] = []
             payload_calendar_to_real: dict[str, str] = {}
 
-            if config.ai.enabled and target_events_payload and ai_input_hash != last_ai_hash:
+            if config.ai.enabled and target_events_payload and (
+                ai_input_hash != last_ai_hash or force_ai_due_to_new_inbox
+            ):
                 ai_client = OpenAICompatibleClient(config.ai)
                 if ai_client.is_configured():
                     selected_model = str(config.ai.model or "").strip()
                     high_load_model = str(getattr(config.ai, "high_load_model", "") or "").strip()
                     high_load_threshold = int(getattr(config.ai, "high_load_event_threshold", 0) or 0)
-                    high_load_active = high_load_threshold > 0 and len(planning_events) >= high_load_threshold
+                    high_load_manual_active = high_load_threshold > 0 and len(planning_events) >= high_load_threshold
+                    high_load_auto_enabled = bool(getattr(config.ai, "high_load_auto_enabled", False))
+                    high_load_auto_metrics = _compute_high_load_auto_metrics(
+                        planning_events=planning_events,
+                        window_start=window_start,
+                        window_end=window_end,
+                        event_baseline=int(getattr(config.ai, "high_load_auto_event_baseline", 12) or 12),
+                        score_threshold=float(getattr(config.ai, "high_load_auto_score_threshold", 0.65) or 0.65),
+                    )
+                    high_load_auto_active = high_load_auto_enabled and bool(high_load_auto_metrics.get("active", False))
+                    high_load_active = high_load_manual_active or high_load_auto_active
                     if high_load_model and high_load_active:
                         selected_model = high_load_model
                     use_flex_tier = bool(getattr(config.ai, "high_load_use_flex", False)) and high_load_active
@@ -499,9 +615,30 @@ class PipelineMixin:
                             "total_tokens": int(usage.get("total_tokens", 0) or 0),
                             "target_events_count": len(target_events_payload),
                             "planning_events_count": len(planning_events),
+                            "inbox_pending_count": int(inbox_pending_count),
+                            "forced_by_new_inbox": bool(force_ai_due_to_new_inbox),
                             "ai_input_hash": ai_input_hash,
                             "model": selected_model,
                             "high_load_model_active": bool(selected_model != str(config.ai.model or "").strip()),
+                            "high_load_manual_active": high_load_manual_active,
+                            "high_load_auto_enabled": high_load_auto_enabled,
+                            "high_load_auto_active": high_load_auto_active,
+                            "high_load_auto_score": float(high_load_auto_metrics.get("score", 0.0) or 0.0),
+                            "high_load_auto_score_threshold": float(
+                                high_load_auto_metrics.get("score_threshold", 0.0) or 0.0
+                            ),
+                            "high_load_auto_density_ratio": float(
+                                high_load_auto_metrics.get("density_ratio", 0.0) or 0.0
+                            ),
+                            "high_load_auto_count_ratio": float(
+                                high_load_auto_metrics.get("count_ratio", 0.0) or 0.0
+                            ),
+                            "high_load_auto_conflict_ratio": float(
+                                high_load_auto_metrics.get("conflict_ratio", 0.0) or 0.0
+                            ),
+                            "high_load_auto_conflict_pairs": int(
+                                high_load_auto_metrics.get("conflict_pairs", 0) or 0
+                            ),
                             "service_tier": "flex" if use_flex_tier else "",
                         },
                     )
@@ -510,7 +647,15 @@ class PipelineMixin:
             elif not config.ai.enabled:
                 _audit(calendar_id="system", uid="ai", action="skip_ai_disabled", details={})
             elif ai_input_hash == last_ai_hash:
-                _audit(calendar_id="system", uid="ai", action="skip_ai_same_input_hash", details={})
+                _audit(
+                    calendar_id="system",
+                    uid="ai",
+                    action="skip_ai_same_input_hash",
+                    details={
+                        "inbox_pending_count": int(inbox_pending_count),
+                        "forced_by_new_inbox": bool(force_ai_due_to_new_inbox),
+                    },
+                )
             else:
                 _audit(calendar_id="system", uid="ai", action="skip_ai_no_targets", details={})
 

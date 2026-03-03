@@ -10,6 +10,9 @@ class ModelsTests(unittest.TestCase):
         self.assertTrue(bool(cfg.system_prompt.strip()))
         self.assertEqual(cfg.high_load_model, "")
         self.assertEqual(cfg.high_load_event_threshold, 0)
+        self.assertFalse(cfg.high_load_auto_enabled)
+        self.assertEqual(cfg.high_load_auto_score_threshold, 0.65)
+        self.assertEqual(cfg.high_load_auto_event_baseline, 12)
         self.assertFalse(cfg.high_load_use_flex)
         self.assertTrue(cfg.high_load_flex_fallback_to_auto)
 
@@ -32,9 +35,15 @@ class ModelsTests(unittest.TestCase):
             {
                 "high_load_model": "gpt-5",
                 "high_load_event_threshold": 12,
+                "high_load_auto_enabled": True,
+                "high_load_auto_score_threshold": 0.72,
+                "high_load_auto_event_baseline": 9,
                 "high_load_use_flex": True,
             }
         )
+        self.assertTrue(cfg.high_load_auto_enabled)
+        self.assertEqual(cfg.high_load_auto_score_threshold, 0.72)
+        self.assertEqual(cfg.high_load_auto_event_baseline, 9)
         self.assertTrue(cfg.high_load_use_flex)
 
     def test_ai_config_high_load_flex_fallback_flag(self) -> None:

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -7,6 +8,8 @@ from fastapi import FastAPI, HTTPException
 from avocado.integrations.caldav import CalDAVService
 from avocado.web_admin.schemas import CalendarRulesUpdateRequest
 from avocado.web_admin.utils import normalize_name
+
+LOCK_NAME_PATTERN = re.compile(r"\[\s*l\s*\]", re.IGNORECASE)
 
 
 def register_calendar_routes(app: FastAPI) -> None:
@@ -28,7 +31,10 @@ def register_calendar_routes(app: FastAPI) -> None:
             item["is_stack"] = cal.calendar_id == config.calendar_rules.stack_calendar_id
             item["is_user"] = cal.calendar_id == config.calendar_rules.user_calendar_id
             item["is_new"] = cal.calendar_id == config.calendar_rules.new_calendar_id
-            item["source_locked"] = cal.calendar_id in set(config.calendar_rules.locked_calendar_ids or [])
+            locked_by_name = bool(LOCK_NAME_PATTERN.search(str(cal.name or "")))
+            item["source_locked"] = (
+                cal.calendar_id in set(config.calendar_rules.locked_calendar_ids or []) or locked_by_name
+            )
             name_key = normalize_name(cal.name)
             item["managed_duplicate"] = False
             item["managed_duplicate_role"] = ""

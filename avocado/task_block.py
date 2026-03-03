@@ -21,6 +21,8 @@ AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", re.DOTALL)
 ALLOWED_TASK_KEYS = set(AI_TASK_ALL_FIELDS)
 logger = logging.getLogger(__name__)
 LOCK_MARKER_PATTERN = re.compile(r"(?:^|\s)\.lock(?:\s|$)", re.IGNORECASE)
+MESSAGE_MARKER_LINE_PATTERN = re.compile(r"^\s*\.m\s+(.+?)\s*$", re.IGNORECASE)
+ORPHAN_AI_TASK_MARKER_LINE_PATTERN = re.compile(r"^\s*\[/?AI Task\]\s*$", re.IGNORECASE)
 
 
 def _normalize_user_intent(value: Any) -> str:
@@ -28,6 +30,23 @@ def _normalize_user_intent(value: Any) -> str:
     if text.casefold() in {"", "\"\"", "''", "null", "none", "~"}:
         return ""
     return text
+
+
+def _coerce_locked_value(value: Any, fallback: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return int(value) != 0
+    text = str(value or "").strip().casefold()
+    if not text:
+        return bool(fallback)
+    true_values = {"1", "true", "t", "yes", "y", "on", "lock", "locked"}
+    false_values = {"0", "false", "f", "fause", "no", "n", "off", "unlock", "unlocked"}
+    if text in true_values:
+        return True
+    if text in false_values:
+        return False
+    return bool(fallback)
 
 
 def _resolve_ai_task_template_path() -> Path:
@@ -52,7 +71,7 @@ def _load_task_template() -> dict[str, Any]:
 def build_default_task(defaults: TaskDefaultsConfig) -> dict[str, Any]:
     template = _load_task_template()
     return {
-        "locked": bool(template.get("locked", defaults.locked)),
+        "locked": _coerce_locked_value(template.get("locked"), defaults.locked),
         "user_intent": _normalize_user_intent(template.get("user_intent", "")),
     }
 
@@ -62,6 +81,63 @@ def _has_lock_marker(description: str) -> bool:
     if not text:
         return False
     return bool(LOCK_MARKER_PATTERN.search(text))
+
+
+def _strip_lock_marker_from_visible_description(description: str) -> str:
+    text = strip_ai_task_block(description or "")
+    if not text:
+        return ""
+    cleaned = re.sub(r"(?i)(?<!\S)\.lock(?!\S)", "", text)
+    lines = []
+    for line in cleaned.splitlines():
+        line = re.sub(r"[ \t]{2,}", " ", line).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _extract_message_intent(description: str) -> str:
+    text = strip_ai_task_block(description or "")
+    if not text:
+        return ""
+    for raw_line in text.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        match = MESSAGE_MARKER_LINE_PATTERN.match(line)
+        if not match:
+            continue
+        return _normalize_user_intent(match.group(1))
+    return ""
+
+
+def _strip_message_marker_from_visible_description(description: str) -> str:
+    text = strip_ai_task_block(description or "")
+    if not text:
+        return ""
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        if MESSAGE_MARKER_LINE_PATTERN.match(line):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _strip_orphan_ai_task_markers(description: str) -> str:
+    text = str(description or "")
+    if not text:
+        return ""
+    cleaned_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = str(raw_line or "")
+        if ORPHAN_AI_TASK_MARKER_LINE_PATTERN.match(line.strip()):
+            continue
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines).strip()
+    return cleaned
 
 
 def parse_ai_task_block(description: str) -> dict[str, Any] | None:
@@ -93,7 +169,7 @@ def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dic
     for key in ALLOWED_TASK_KEYS:
         if key in parsed:
             normalized[key] = parsed[key]
-    normalized["locked"] = bool(normalized.get("locked", defaults.locked))
+    normalized["locked"] = _coerce_locked_value(normalized.get("locked", defaults.locked), defaults.locked)
     normalized["user_intent"] = _normalize_user_intent(normalized.get("user_intent", ""))
     return normalized
 
@@ -110,7 +186,10 @@ def upsert_ai_task_block(description: str, task_payload: dict[str, Any]) -> str:
         return block
     if AI_TASK_PATTERN.search(description):
         return AI_TASK_PATTERN.sub(block, description).strip()
-    return f"{description.rstrip()}\n\n{block}".strip()
+    sanitized_description = _strip_orphan_ai_task_markers(description).rstrip()
+    if not sanitized_description:
+        return block
+    return f"{sanitized_description}\n\n{block}".strip()
 
 
 def ensure_ai_task_block(
@@ -120,9 +199,15 @@ def ensure_ai_task_block(
     parsed = parse_ai_task_block(description)
     if parsed is None:
         task = build_default_task(defaults)
+        base_description = description
+        message_intent = _extract_message_intent(description)
+        if message_intent:
+            task["user_intent"] = message_intent
+            base_description = _strip_message_marker_from_visible_description(base_description)
         if _has_lock_marker(description):
             task["locked"] = True
-        return upsert_ai_task_block(description, task), task, True
+            base_description = _strip_lock_marker_from_visible_description(base_description)
+        return upsert_ai_task_block(base_description, task), task, True
     normalized = _normalize_task(parsed, defaults)
     updated_description = upsert_ai_task_block(description, normalized)
     changed = normalized != parsed or updated_description != description
@@ -148,6 +233,20 @@ def set_ai_task_user_intent(
     if _normalize_user_intent(task_payload.get("user_intent", "")) == normalized_intent:
         return updated_description, task_payload, changed
     task_payload["user_intent"] = normalized_intent
+    final_description = upsert_ai_task_block(updated_description, task_payload)
+    return final_description, task_payload, True
+
+
+def set_ai_task_locked(
+    description: str,
+    defaults: TaskDefaultsConfig,
+    locked: bool,
+) -> tuple[str, dict[str, Any], bool]:
+    updated_description, task_payload, changed = ensure_ai_task_block(description, defaults)
+    normalized_locked = bool(locked)
+    if _coerce_locked_value(task_payload.get("locked", False), defaults.locked) == normalized_locked:
+        return updated_description, task_payload, changed
+    task_payload["locked"] = normalized_locked
     final_description = upsert_ai_task_block(updated_description, task_payload)
     return final_description, task_payload, True
 

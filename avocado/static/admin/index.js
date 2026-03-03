@@ -1,14 +1,14 @@
-﻿import { apiGetJson, apiPost, apiPut } from "./api.js";
-import { renderAiChanges, hideAllKebabMenus } from "./ai_changes.js";
-import { renderAiBytesChart } from "./ai_bytes_chart.js";
-import { renderCalendars, readLockedSourceCalendarIds } from "./calendars_table.js";
-import { bindConfig, readPayload } from "./config_form.js";
-import { dom } from "./dom.js";
-import { I18N } from "./i18n.js";
-import { renderAuditLogs } from "./logs_audit.js";
-import { renderSyncLogs } from "./logs_sync.js";
-import { AI_BYTES_CACHE_KEY, AI_BYTES_DAYS_KEY, LANG_PREF_KEY, state } from "./state.js";
-import { retranslateStatus, setActiveTab, setStatus, withPending } from "./ui.js";
+import { apiGetJson, apiPost, apiPut } from "./api.js?v=20260303e";
+import { renderAiChanges, hideAllKebabMenus } from "./ai_changes.js?v=20260303e";
+import { renderAiBytesChart } from "./ai_bytes_chart.js?v=20260303e";
+import { renderCalendars, readLockedSourceCalendarIds } from "./calendars_table.js?v=20260303e";
+import { bindConfig, readPayload } from "./config_form.js?v=20260303e";
+import { dom } from "./dom.js?v=20260303e";
+import { I18N } from "./i18n.js?v=20260303e";
+import { renderAuditLogs } from "./logs_audit.js?v=20260303e";
+import { renderSyncLogs } from "./logs_sync.js?v=20260303e";
+import { AI_BYTES_CACHE_KEY, AI_BYTES_DAYS_KEY, LANG_PREF_KEY, state } from "./state.js?v=20260303e";
+import { retranslateStatus, setActiveTab, setStatus, withPending } from "./ui.js?v=20260303e";
 import {
   ensureSelectOption,
   escapeHtml,
@@ -20,7 +20,7 @@ import {
   toDisplayValue,
   toPrettyJson,
   joinList,
-} from "./utils.js";
+} from "./utils.js?v=20260303e";
 
 const template = (text, vars = {}) =>
   String(text || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => String(vars[key] ?? ""));
@@ -108,6 +108,10 @@ const applyLanguage = (pref) => {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     const key = el.getAttribute("data-i18n-placeholder");
     el.setAttribute("placeholder", t(key));
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-title");
+    el.setAttribute("title", t(key));
   });
 
   if (dom.langSelect) {
@@ -542,6 +546,7 @@ if (dom.clearAuditRunFilterBtn) dom.clearAuditRunFilterBtn.addEventListener("cli
 dom.refreshAiChangesBtn.addEventListener("click", refreshAiChanges);
 dom.refreshAiBytesBtn.addEventListener("click", refreshAiBytes);
 dom.tabConfigBtn.addEventListener("click", () => setActiveTab(dom, "config"));
+if (dom.tabAiBtn) dom.tabAiBtn.addEventListener("click", () => setActiveTab(dom, "ai"));
 dom.tabCalendarsBtn.addEventListener("click", () => setActiveTab(dom, "calendars"));
 dom.tabLogsBtn.addEventListener("click", () => setActiveTab(dom, "logs"));
 if (dom.timezoneSourceSelect && dom.timezoneSelect) {

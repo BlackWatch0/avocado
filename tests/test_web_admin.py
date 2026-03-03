@@ -211,6 +211,7 @@ class WebAdminTests(unittest.TestCase):
                     _cal("dup-user-id", "Avocado User Calendar"),
                     _cal("dup-stack-id", "Avocado Stack Calendar"),
                     _cal("dup-new-id", "Avocado New Calendar"),
+                    _cal("locked-by-name-id", "Personal [L]"),
                     _cal("normal-id", "Personal"),
                 ]
 
@@ -231,6 +232,9 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(len(duplicate_new_rows), 1)
         self.assertTrue(duplicate_new_rows[0]["managed_duplicate"])
         self.assertEqual(duplicate_new_rows[0]["managed_duplicate_role"], "new")
+        locked_by_name_rows = [x for x in rows if x["calendar_id"] == "locked-by-name-id"]
+        self.assertEqual(len(locked_by_name_rows), 1)
+        self.assertTrue(bool(locked_by_name_rows[0]["source_locked"]))
 
     def test_sync_run_window_calls_sync_engine(self) -> None:
         fake_result = SyncResult(

@@ -26,7 +26,7 @@ Output JSON schema (exact keys/types, no extra text/fields):
 "end": "ISO8601 datetime",
 "summary": "string",
 "location": "string",
-"description": "string \n [AI Task]",
+"description": "string",
 "reason": "string"
 }
 ]

@@ -34,6 +34,7 @@
 
     <nav class="tabs">
       <button id="tab-config" type="button" class="tab active" data-i18n="tab.config">Config</button>
+      <button id="tab-ai" type="button" class="tab" data-i18n="tab.ai">AI</button>
       <button id="tab-calendars" type="button" class="tab" data-i18n="tab.calendars">Calendars</button>
       <button id="tab-logs" type="button" class="tab" data-i18n="tab.logs">Logs</button>
     </nav>
@@ -46,7 +47,7 @@
         <label><span data-i18n="field.password">Password</span><input id="caldav-password" type="password" data-i18n-placeholder="placeholder.keep_secret"></label>
       </section>
 
-      <section class="card" data-panel="config">
+      <section class="card" data-panel="ai">
         <h2 data-i18n="section.ai">AI</h2>
         <label class="checkbox"><input id="ai-enabled" type="checkbox"> <span data-i18n="field.ai_enabled">AI Enabled</span></label>
         <label>
@@ -64,12 +65,17 @@
         </label>
         <label><span data-i18n="field.high_load_model">High-Load Model</span><input id="ai-high-load-model" type="text" placeholder="e.g. gpt-5"></label>
         <label><span data-i18n="field.high_load_event_threshold">High-Load Event Threshold</span><input id="ai-high-load-event-threshold" type="number" min="0" required></label>
+        <label class="checkbox">
+          <input id="ai-high-load-auto-enabled" type="checkbox">
+          <span data-i18n="field.high_load_auto_enabled">Auto Detect Heavy Load</span>
+          <span class="hint-icon" data-i18n-title="hint.high_load_auto_calc" title="Score = 0.45*density + 0.35*count + 0.20*conflict. Density=busy time/window, count=events/baseline, conflict=overlap ratio. Trigger when score reaches threshold.">i</span>
+        </label>
         <label class="checkbox"><input id="ai-high-load-use-flex" type="checkbox"> <span data-i18n="field.high_load_use_flex">Use Flex Tier Above Threshold</span></label>
         <label class="checkbox"><input id="ai-high-load-flex-fallback-auto" type="checkbox"> <span data-i18n="field.high_load_flex_fallback_to_auto">Fallback to Auto Tier if Flex Fails</span></label>
         <label><span data-i18n="field.timeout_seconds">Timeout Seconds</span><input id="ai-timeout-seconds" type="number" min="1" required></label>
       </section>
 
-      <section class="card wide" data-panel="config">
+      <section class="card wide" data-panel="ai">
         <h2 data-i18n="section.prompt">Prompt</h2>
         <label>
           <span data-i18n="field.system_prompt">System Prompt</span>
@@ -136,7 +142,6 @@
 
       <section class="card" data-panel="config">
         <h2 data-i18n="section.task_defaults">Task Defaults</h2>
-        <label class="checkbox"><input id="task-locked" type="checkbox"> <span data-i18n="field.locked">Locked</span></label>
         <label><span data-i18n="field.editable_fields">Editable Fields (comma separated)</span><input id="task-editable-fields" type="text"></label>
       </section>
 
@@ -235,6 +240,6 @@
     </form>
   </main>
 
-  <script type="module" src="/static/admin/index.js?v=20260303c"></script>
+  <script type="module" src="/static/admin/index.js?v=20260303e"></script>
 </body>
 </html>

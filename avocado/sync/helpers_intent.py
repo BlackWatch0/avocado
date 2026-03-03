@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from avocado.core.models import EventRecord
-from avocado.task_block import parse_ai_task_block
+from avocado.task_block import _coerce_locked_value, parse_ai_task_block
 
 
 def _normalize_intent_value(value: Any) -> str:
@@ -32,7 +32,7 @@ def _event_has_user_intent(event: EventRecord) -> bool:
 def _event_locked_for_ai(event: EventRecord) -> bool:
     parsed = parse_ai_task_block(event.description or "")
     if isinstance(parsed, dict) and "locked" in parsed:
-        return bool(parsed.get("locked"))
+        return _coerce_locked_value(parsed.get("locked"), bool(event.locked))
     return bool(event.locked)
 
 

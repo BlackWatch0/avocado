@@ -29,6 +29,9 @@ class AIConfig:
     model: str = "gpt-4o-mini"
     high_load_model: str = ""
     high_load_event_threshold: int = 0
+    high_load_auto_enabled: bool = False
+    high_load_auto_score_threshold: float = 0.65
+    high_load_auto_event_baseline: int = 12
     high_load_use_flex: bool = False
     high_load_flex_fallback_to_auto: bool = True
     timeout_seconds: int = 90
@@ -41,6 +44,9 @@ class AIConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AIConfig":
         data = data or {}
+        auto_score_threshold = float(data.get("high_load_auto_score_threshold", 0.65))
+        if auto_score_threshold < 0:
+            auto_score_threshold = 0.0
         return cls(
             base_url=str(data.get("base_url", "https://api.openai.com/v1")).strip()
             or "https://api.openai.com/v1",
@@ -48,6 +54,9 @@ class AIConfig:
             model=str(data.get("model", "gpt-4o-mini")).strip() or "gpt-4o-mini",
             high_load_model=str(data.get("high_load_model", "")).strip(),
             high_load_event_threshold=max(0, int(data.get("high_load_event_threshold", 0))),
+            high_load_auto_enabled=bool(data.get("high_load_auto_enabled", False)),
+            high_load_auto_score_threshold=auto_score_threshold,
+            high_load_auto_event_baseline=max(1, int(data.get("high_load_auto_event_baseline", 12))),
             high_load_use_flex=bool(data.get("high_load_use_flex", False)),
             high_load_flex_fallback_to_auto=bool(data.get("high_load_flex_fallback_to_auto", True)),
             timeout_seconds=int(data.get("timeout_seconds", 90)),

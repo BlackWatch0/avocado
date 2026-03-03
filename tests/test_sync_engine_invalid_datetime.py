@@ -356,6 +356,80 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             audit_events = store.recent_audit_events(limit=200)
             self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
 
+    def test_new_calendar_mapped_but_not_cleaned_still_imports_and_triggers_ai(self) -> None:
+        class _MappedNewImportCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                for event in self._events[self.user_id].values():
+                    event.description = (
+                        "[AI Task]\n"
+                        "locked: false\n"
+                        "user_intent:\n"
+                        "[/AI Task]"
+                    )
+                self._events[self.new_id] = {
+                    "new-stuck-uid": EventRecord(
+                        calendar_id=self.new_id,
+                        uid="new-stuck-uid",
+                        summary="Stuck Intake Event",
+                        description="intake retained after interrupted run",
+                        start=now + timedelta(hours=8),
+                        end=now + timedelta(hours=9),
+                        etag="new-stuck-etag",
+                    )
+                }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            store.upsert_event_mapping(
+                sync_id="sync-pre-mapped-new",
+                source="new",
+                source_calendar_id="cal-new",
+                source_uid="new-stuck-uid",
+                source_href_hash="pre-hash",
+                user_uid="avo-sync-pre-mapped-new",
+                stack_uid="avo-sync-pre-mapped-new",
+                status="active",
+            )
+            engine = SyncEngine(manager, store)
+            _CountingAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _MappedNewImportCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _CountingAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_CountingAIClient.calls, 1)
+            audit_events = store.recent_audit_events(limit=200)
+            self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
+
     def test_high_load_model_is_used_when_event_count_exceeds_threshold(self) -> None:
         class _ManyEventsCalDAVService(_FakeCalDAVService):
             def __init__(self, config) -> None:
@@ -490,6 +564,99 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
             self.assertTrue(ai_request_events)
             self.assertEqual(ai_request_events[-1]["details"].get("service_tier"), "flex")
+
+    def test_high_load_auto_scoring_can_activate_model_and_flex(self) -> None:
+        class _DenseEventsCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                self._events[self.user_id] = {
+                    "uid-auto-1": EventRecord(
+                        calendar_id=self.user_id,
+                        uid="uid-auto-1",
+                        summary="Auto Task 1",
+                        description=(
+                            "[AI Task]\n"
+                            "locked: false\n"
+                            "user_intent: optimize\n"
+                            "[/AI Task]"
+                        ),
+                        start=now + timedelta(hours=2),
+                        end=now + timedelta(hours=4),
+                        etag="etag-auto-1",
+                    ),
+                    "uid-auto-2": EventRecord(
+                        calendar_id=self.user_id,
+                        uid="uid-auto-2",
+                        summary="Auto Task 2",
+                        description=(
+                            "[AI Task]\n"
+                            "locked: false\n"
+                            "user_intent: optimize\n"
+                            "[/AI Task]"
+                        ),
+                        start=now + timedelta(hours=3),
+                        end=now + timedelta(hours=5),
+                        etag="etag-auto-2",
+                    ),
+                }
+                self._events[self.new_id] = {}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-4o-mini",
+                        "high_load_model": "gpt-5",
+                        "high_load_event_threshold": 0,
+                        "high_load_auto_enabled": True,
+                        "high_load_auto_score_threshold": 0.3,
+                        "high_load_auto_event_baseline": 2,
+                        "high_load_use_flex": True,
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _ModelCaptureAIClient.calls = 0
+            _ModelCaptureAIClient.models = []
+            _ModelCaptureAIClient.service_tiers = []
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _DenseEventsCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _ModelCaptureAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_ModelCaptureAIClient.calls, 1)
+            self.assertEqual(_ModelCaptureAIClient.models[-1], "gpt-5")
+            self.assertEqual(_ModelCaptureAIClient.service_tiers[-1], "flex")
+            audit_events = store.recent_audit_events(limit=200)
+            ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
+            self.assertTrue(ai_request_events)
+            details = ai_request_events[-1]["details"]
+            self.assertFalse(bool(details.get("high_load_manual_active")))
+            self.assertTrue(bool(details.get("high_load_auto_enabled")))
+            self.assertTrue(bool(details.get("high_load_auto_active")))
+            self.assertGreaterEqual(float(details.get("high_load_auto_score", 0.0)), 0.3)
 
     def test_external_calendar_new_import_triggers_ai_without_intent(self) -> None:
         class _ExternalImportCalDAVService(_FakeCalDAVService):
