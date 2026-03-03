@@ -62,6 +62,13 @@ class TaskBlockTests(unittest.TestCase):
         self.assertEqual(set(ai_task.keys()), {"locked", "user_intent"})
         self.assertEqual(x_meta, {})
 
+    def test_ensure_block_locks_when_description_contains_dot_lock(self) -> None:
+        description = "Prepare release notes .lock"
+        updated, payload, changed = ensure_ai_task_block(description, self.defaults)
+        self.assertTrue(changed)
+        self.assertTrue(payload["locked"])
+        self.assertIn("locked: true", updated)
+
 
 if __name__ == "__main__":
     unittest.main()

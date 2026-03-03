@@ -20,6 +20,7 @@ AI_TASK_END = "[/AI Task]"
 AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", re.DOTALL)
 ALLOWED_TASK_KEYS = set(AI_TASK_ALL_FIELDS)
 logger = logging.getLogger(__name__)
+LOCK_MARKER_PATTERN = re.compile(r"(?:^|\s)\.lock(?:\s|$)", re.IGNORECASE)
 
 
 def _normalize_user_intent(value: Any) -> str:
@@ -54,6 +55,13 @@ def build_default_task(defaults: TaskDefaultsConfig) -> dict[str, Any]:
         "locked": bool(template.get("locked", defaults.locked)),
         "user_intent": _normalize_user_intent(template.get("user_intent", "")),
     }
+
+
+def _has_lock_marker(description: str) -> bool:
+    text = strip_ai_task_block(description or "")
+    if not text:
+        return False
+    return bool(LOCK_MARKER_PATTERN.search(text))
 
 
 def parse_ai_task_block(description: str) -> dict[str, Any] | None:
@@ -112,6 +120,8 @@ def ensure_ai_task_block(
     parsed = parse_ai_task_block(description)
     if parsed is None:
         task = build_default_task(defaults)
+        if _has_lock_marker(description):
+            task["locked"] = True
         return upsert_ai_task_block(description, task), task, True
     normalized = _normalize_task(parsed, defaults)
     updated_description = upsert_ai_task_block(description, normalized)

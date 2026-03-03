@@ -129,6 +129,48 @@ class AIClientPayloadLoggingTests(unittest.TestCase):
             last_call_json = post_mock.call_args.kwargs.get("json", {})
             self.assertEqual(last_call_json.get("service_tier"), "auto")
 
+    def test_generate_changes_retries_with_temperature_one_on_unsupported_400(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "ai_payload_exchange.jsonl"
+            client = self._make_client(log_path)
+            client.config.model = "gpt-5"
+
+            mock_400 = mock.Mock()
+            mock_400.status_code = 400
+            mock_400.ok = False
+            mock_400.text = "{\"error\":{\"message\":\"Unsupported value: 'temperature'\"}}"
+            mock_400.json.return_value = {
+                "error": {
+                    "message": "Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.",
+                    "type": "invalid_request_error",
+                    "param": "temperature",
+                    "code": "unsupported_value",
+                }
+            }
+
+            mock_ok = mock.Mock()
+            mock_ok.status_code = 200
+            mock_ok.ok = True
+            mock_ok.raise_for_status.return_value = None
+            mock_ok.json.return_value = {
+                "choices": [{"message": {"content": '{"changes": []}'}}],
+            }
+
+            with mock.patch("avocado.ai_client.requests.post", side_effect=[mock_400, mock_ok]) as post_mock:
+                result = client.generate_changes(messages=[{"role": "user", "content": "test"}])
+
+            self.assertEqual(result, {"changes": []})
+            self.assertEqual(post_mock.call_count, 2)
+            first_json = post_mock.call_args_list[0].kwargs.get("json", {})
+            second_json = post_mock.call_args_list[1].kwargs.get("json", {})
+            self.assertEqual(first_json.get("temperature"), 0.2)
+            self.assertEqual(second_json.get("temperature"), 1)
+            lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 1)
+            payload = json.loads(lines[0])
+            self.assertEqual(payload["response_status"], 200)
+            self.assertEqual(payload["request"].get("temperature"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

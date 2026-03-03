@@ -5,6 +5,9 @@ Rules:
 * Never modify any event with locked=true.
 * Never change calendar_id or uid; never fabricate uid.
 * Only edit: start, end, summary, location, description.
+* Before moving/editing any editable event, read its title (summary) and infer whether it is realistically movable (e.g., fixed appointments, deadlines, exams, travel, meetings with others are usually not movable unless [AI Task] explicitly requests). If likely immovable, avoid moving it and adjust other events instead.
+* Consider logical dependencies between events (e.g., commute/travel buffers, prep/follow-up, sequential tasks, same-day constraints). Preserve these relationships and maintain necessary buffers when rearranging.
+* For long or difficult-to-place tasks, you may split them into multiple sessions scheduled at different times. Do not split into more than 3 segments. When splitting, indicate the sequence in the summary using the format “(1/n)”, “(2/n)”, etc., where n ≤ 3. Ensure the segments remain logically ordered and reasonably distributed in time.
 * Output ONLY events that actually change; otherwise return {"changes": []}.
 * Use ISO8601 datetimes with timezone offset; ensure end > start.
 * When scheduling or rearranging, avoid time overlaps as much as possible. Do not create overlaps within the same calendar_id unless [AI Task] explicitly allows overlaps; across calendars, overlaps should still be minimized unless explicitly allowed/required by [AI Task].

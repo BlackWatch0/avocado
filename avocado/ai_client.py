@@ -140,9 +140,27 @@ class OpenAICompatibleClient:
     def _chat_timeout_seconds(self, service_tier: str) -> int:
         base_timeout = max(1, int(getattr(self.config, "timeout_seconds", 90) or 90))
         if str(service_tier).strip().lower() == "flex":
-            # Flex can be slower; use at least 10 minutes unless caller configured larger timeout.
-            return max(base_timeout, 600)
+            # Flex can be slower; use at least 15 minutes unless caller configured larger timeout.
+            return max(base_timeout, 900)
         return base_timeout
+
+    @staticmethod
+    def _is_temperature_unsupported_400(response: requests.Response) -> bool:
+        if int(getattr(response, "status_code", 0) or 0) != 400:
+            return False
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        message = str(error.get("message", "") or "").casefold()
+        param = str(error.get("param", "") or "").casefold()
+        code = str(error.get("code", "") or "").casefold()
+        return (
+            "temperature" in message
+            and ("unsupported" in message or "only the default" in message)
+            and (param in {"temperature", ""} or code == "unsupported_value")
+        )
 
     def _post_chat(self, endpoint: str, request_payload: dict[str, Any]) -> requests.Response:
         tier = str(request_payload.get("service_tier", "") or "").strip().lower()
@@ -220,6 +238,13 @@ class OpenAICompatibleClient:
                 endpoint=endpoint,
                 request_payload=request_payload,
             )
+            if not response.ok and self._is_temperature_unsupported_400(response):
+                retry_payload = dict(request_payload_used)
+                retry_payload["temperature"] = 1
+                response, request_payload_used = self._post_chat_with_flex_policy(
+                    endpoint=endpoint,
+                    request_payload=retry_payload,
+                )
             response.raise_for_status()
             payload = response.json()
             self.last_usage = self._extract_usage(payload)

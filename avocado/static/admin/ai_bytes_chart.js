@@ -56,6 +56,33 @@
   const maxTokens = Math.max(...points.map((p) => p.tokens));
   const yMax = maxTokens <= 1 ? 1 : Math.ceil(maxTokens * 1.1);
   const xStep = points.length === 1 ? 0 : plotW / (points.length - 1);
+  const yBase = cssHeight - padBottom;
+  const coords = points.map((p, idx) => ({
+    x: padLeft + idx * xStep,
+    y: padTop + plotH - (p.tokens / yMax) * plotH,
+  }));
+
+  const successFlexIndexes = points
+    .map((p, idx) => (p.flexUsed && p.tokens > 0 ? idx : -1))
+    .filter((idx) => idx >= 0);
+  const greenSegments = Array(Math.max(0, points.length - 1)).fill(false);
+  const greenSpans = [];
+  for (let i = 1; i < successFlexIndexes.length; i += 1) {
+    const start = successFlexIndexes[i - 1];
+    const end = successFlexIndexes[i];
+    let onlyZeroInBetween = true;
+    for (let k = start + 1; k < end; k += 1) {
+      if ((points[k]?.tokens || 0) > 0) {
+        onlyZeroInBetween = false;
+        break;
+      }
+    }
+    if (!onlyZeroInBetween) continue;
+    for (let seg = start + 1; seg <= end; seg += 1) {
+      greenSegments[seg - 1] = true;
+    }
+    greenSpans.push([start, end]);
+  }
 
   ctx.strokeStyle = "#93c5fd";
   ctx.lineWidth = 1;
@@ -67,20 +94,46 @@
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "#2563eb";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((p, idx) => {
-    const x = padLeft + idx * xStep;
-    const y = padTop + plotH - (p.tokens / yMax) * plotH;
-    if (idx === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
+  if (points.length === 1) {
+    const x = coords[0].x;
+    const y = coords[0].y;
+    ctx.strokeStyle = "#2563eb";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 0.001, y);
+    ctx.stroke();
+  } else {
+    greenSpans.forEach(([start, end]) => {
+      if (end <= start) return;
+      ctx.fillStyle = "rgba(22, 163, 74, 0.14)";
+      ctx.beginPath();
+      ctx.moveTo(coords[start].x, yBase);
+      for (let idx = start; idx <= end; idx += 1) {
+        ctx.lineTo(coords[idx].x, coords[idx].y);
+      }
+      ctx.lineTo(coords[end].x, yBase);
+      ctx.closePath();
+      ctx.fill();
+    });
+
+    for (let i = 1; i < points.length; i += 1) {
+      const x1 = coords[i - 1].x;
+      const y1 = coords[i - 1].y;
+      const x2 = coords[i].x;
+      const y2 = coords[i].y;
+      ctx.strokeStyle = greenSegments[i - 1] ? "#16a34a" : "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }
 
   points.forEach((p, idx) => {
-    const x = padLeft + idx * xStep;
-    const y = padTop + plotH - (p.tokens / yMax) * plotH;
+    const x = coords[idx].x;
+    const y = coords[idx].y;
     const successFlex = !!p.flexUsed && p.tokens > 0;
     ctx.fillStyle = successFlex ? "#16a34a" : "#1d4ed8";
     ctx.beginPath();
