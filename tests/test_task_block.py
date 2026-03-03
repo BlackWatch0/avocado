@@ -7,7 +7,6 @@ from avocado.task_block import (
     ai_task_payload_from_description,
     ensure_ai_task_block,
     parse_ai_task_block,
-    set_ai_task_category,
     strip_ai_task_block,
 )
 
@@ -41,13 +40,6 @@ class TaskBlockTests(unittest.TestCase):
         description = """Hello\n\n[AI Task]\nuser_intent: "move around 3pm\nlocked: false\n[/AI Task]"""
         self.assertIsNone(parse_ai_task_block(description))
 
-    def test_set_category(self) -> None:
-        description = "Task event"
-        updated, payload, changed = set_ai_task_category(description, self.defaults, "study")
-        self.assertTrue(changed)
-        self.assertIn(AI_TASK_START, updated)
-        self.assertEqual(payload["category"], "study")
-
     def test_ensure_block_normalizes_null_user_intent(self) -> None:
         description = "Task\n\n[AI Task]\nlocked: false\nuser_intent:\n[/AI Task]"
         updated, payload, changed = ensure_ai_task_block(description, self.defaults)
@@ -61,22 +53,15 @@ class TaskBlockTests(unittest.TestCase):
             "[AI Task]\n"
             "version: 2\n"
             "locked: false\n"
-            "editable_fields:\n"
-            "  - start\n"
-            "  - end\n"
-            "category: focus\n"
             "user_intent: postpone 30 minutes\n"
-            "updated_at: '2026-03-03T00:00:00+00:00'\n"
             "[/AI Task]"
         )
         visible, ai_task, x_meta = ai_task_payload_from_description(description, self.defaults)
         self.assertEqual(visible, "Visible text")
         self.assertEqual(ai_task.get("user_intent"), "postpone 30 minutes")
-        self.assertIn("x-version", x_meta)
-        self.assertIn("x-editable_fields", x_meta)
-        self.assertIn("x-updated_at", x_meta)
+        self.assertEqual(set(ai_task.keys()), {"locked", "user_intent"})
+        self.assertEqual(x_meta, {})
 
 
 if __name__ == "__main__":
     unittest.main()
-

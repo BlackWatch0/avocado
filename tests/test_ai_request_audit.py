@@ -252,9 +252,10 @@ class AIRequestAuditTests(unittest.TestCase):
                 self.assertTrue(all(str((item or {}).get("calendar_id", "")) == "stack" for item in payload_events))
                 first_event = payload_events[0] or {}
                 self.assertIn("ai_task", first_event)
-                self.assertIn("x-version", first_event)
-                self.assertIn("x-editable_fields", first_event)
-                self.assertIn("x-updated_at", first_event)
+                self.assertNotIn("x-version", first_event)
+                self.assertNotIn("x-editable_fields", first_event)
+                self.assertNotIn("x-updated_at", first_event)
+                self.assertEqual(set((first_event.get("ai_task") or {}).keys()), {"locked", "user_intent"})
                 self.assertNotIn("[AI Task]", str(first_event.get("description", "")))
 
                 user_events = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())

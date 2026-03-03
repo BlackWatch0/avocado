@@ -25,7 +25,7 @@
         tokens: Number(item?.details?.total_tokens || 0),
       };
     })
-    .filter((item) => Number.isFinite(item.tokens) && item.tokens > 0)
+    .filter((item) => Number.isFinite(item.tokens) && item.tokens >= 0)
     .sort((a, b) => (a.time < b.time ? -1 : 1))
     .slice(-120);
 

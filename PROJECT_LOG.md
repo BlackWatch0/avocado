@@ -134,6 +134,10 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-068 | 新导入日程无意图也触发一次 AI 安排 | Done | 本轮从 `new` 日历导入到 stage 的事件，即使 `user_intent` 为空也会进入 `target_events` 并触发 AI 请求；无新导入且无意图时仍跳过 | P0 | AVO-067 | 2026-03-03 |
+| AVO-067 | `[AI Task]` 标签精简与模板文件独立化 | Done | 注入时仅保留 `locked/user_intent`；不再自动写入 `version/editable_fields/category/updated_at`；模板改为独立 `ai_task_template.yaml` 文件加载 | P1 | AVO-063 | 2026-03-03 |
+| AVO-066 | Docker 默认管理端口改为 1443 | Done | `docker compose up -d --build` 后默认映射 `1443:8080`，重启无需额外指定端口 | P2 | AVO-011 | 2026-03-03 |
+| AVO-065 | AI Token 图改为“每次 Sync 一点”并补零值 | Done | 每次已结束 Sync 都产生一条 token 统计点；未触发 AI 的 Sync 也记录 0；前端图表可展示 0 值点 | P1 | AVO-061 | 2026-03-03 |
 | AVO-064 | 防重复触发：成功改动后消费意图 + 后态哈希去重 | Done | AI 成功改动后仅清空对应事件 `user_intent`；下一轮不因 AI 自身写回重复触发 | P0 | AVO-061, AVO-063 | 2026-03-03 |
 | AVO-063 | AI payload 结构升级（独立 `ai_task` + `x-*`） | Done | `[AI Task]` 字段独立上送，`description` 仅正文；仅发送 Stage 且 UID 去重；`calendar_id` 压缩并回映射 | P0 | AVO-062 | 2026-03-03 |
 | AVO-062 | Prompt 独立文件存储与根目录迁移 | Done | `ai_system_prompt.txt` 独立持久化并由后台编辑；支持旧配置自动迁移 | P1 | AVO-053, AVO-054 | 2026-03-03 |

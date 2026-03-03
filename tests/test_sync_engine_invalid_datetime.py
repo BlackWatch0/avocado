@@ -274,9 +274,70 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             audit_events = store.recent_audit_events(limit=200)
             self.assertTrue(any(item["action"] == "skip_ai_no_targets" for item in audit_events))
 
+    def test_new_calendar_import_triggers_ai_even_without_user_intent(self) -> None:
+        class _NewImportCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                for event in self._events[self.user_id].values():
+                    event.description = (
+                        "[AI Task]\n"
+                        "locked: false\n"
+                        "user_intent:\n"
+                        "[/AI Task]"
+                    )
+                self._events[self.new_id]["new-uid-1"] = EventRecord(
+                    calendar_id=self.new_id,
+                    uid="new-uid-1",
+                    summary="Imported New Event",
+                    description="new event from intake",
+                    start=now + timedelta(hours=6),
+                    end=now + timedelta(hours=7),
+                    etag="new-etag-1",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _CountingAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _NewImportCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _CountingAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_CountingAIClient.calls, 1)
+            audit_events = store.recent_audit_events(limit=200)
+            self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
+
 
 if __name__ == "__main__":
     unittest.main()
-
 
 

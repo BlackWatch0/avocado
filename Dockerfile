@@ -10,10 +10,10 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY avocado /app/avocado
 COPY config.example.yaml /app/config.example.yaml
+COPY ai_task_template.yaml /app/ai_task_template.yaml
 
 RUN mkdir -p /app/data
 
 EXPOSE 8080
 
 CMD ["python", "-m", "avocado.main"]
-

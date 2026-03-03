@@ -8,6 +8,15 @@ from avocado.persistence.state_store.schema import utc_now
 
 
 class AuditRepoMixin:
+    @staticmethod
+    def _extract_total_tokens(details: dict[str, Any]) -> int:
+        prompt_tokens = int(details.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(details.get("completion_tokens", 0) or 0)
+        total_tokens = int(details.get("total_tokens", 0) or 0)
+        if total_tokens <= 0:
+            total_tokens = max(0, prompt_tokens) + max(0, completion_tokens)
+        return max(0, total_tokens)
+
     def record_audit_event(
         self,
         *,
@@ -82,19 +91,49 @@ class AuditRepoMixin:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         with self._lock:
             with self._connect() as conn:
-                rows = conn.execute(
+                run_rows = conn.execute(
                     """
-                    SELECT id, created_at, details_json
-                    FROM audit_events
-                    WHERE action = 'ai_request'
+                    SELECT id, run_at, status, trigger
+                    FROM sync_runs
+                    WHERE status != 'running'
                     ORDER BY id DESC
                     LIMIT ?
                     """,
                     (limit,),
                 ).fetchall()
+                run_ids = [int(row["id"]) for row in run_rows]
+                ai_rows = []
+                if run_ids:
+                    placeholders = ",".join(["?"] * len(run_ids))
+                    ai_rows = conn.execute(
+                        f"""
+                        SELECT run_id, details_json
+                        FROM audit_events
+                        WHERE action = 'ai_request'
+                          AND run_id IN ({placeholders})
+                        """,
+                        tuple(run_ids),
+                    ).fetchall()
+        tokens_by_run: dict[int, dict[str, int]] = {}
+        for row in ai_rows:
+            run_id = int(row["run_id"])
+            try:
+                details = json.loads(row["details_json"] or "{}")
+            except Exception:
+                details = {}
+            total_tokens = self._extract_total_tokens(details if isinstance(details, dict) else {})
+            prompt_tokens = int((details or {}).get("prompt_tokens", 0) or 0)
+            completion_tokens = int((details or {}).get("completion_tokens", 0) or 0)
+            agg = tokens_by_run.setdefault(
+                run_id,
+                {"request_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0},
+            )
+            agg["request_tokens"] += max(0, total_tokens)
+            agg["prompt_tokens"] += max(0, prompt_tokens)
+            agg["completion_tokens"] += max(0, completion_tokens)
         points: list[dict[str, Any]] = []
-        for row in reversed(rows):
-            created_at = str(row["created_at"] or "")
+        for row in reversed(run_rows):
+            created_at = str(row["run_at"] or "")
             try:
                 created_dt = datetime.fromisoformat(created_at)
                 if created_dt.tzinfo is None:
@@ -103,24 +142,20 @@ class AuditRepoMixin:
                 continue
             if created_dt < cutoff:
                 continue
-            try:
-                details = json.loads(row["details_json"] or "{}")
-            except Exception:
-                details = {}
-            prompt_tokens = int(details.get("prompt_tokens", 0) or 0)
-            completion_tokens = int(details.get("completion_tokens", 0) or 0)
-            total_tokens = int(details.get("total_tokens", 0) or 0)
-            if total_tokens <= 0:
-                total_tokens = max(0, prompt_tokens) + max(0, completion_tokens)
-            if total_tokens <= 0:
-                continue
+            run_id = int(row["id"])
+            agg = tokens_by_run.get(
+                run_id,
+                {"request_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0},
+            )
             points.append(
                 {
-                    "id": int(row["id"]),
+                    "id": run_id,
                     "created_at": created_at,
-                    "request_tokens": total_tokens,
-                    "prompt_tokens": max(0, prompt_tokens),
-                    "completion_tokens": max(0, completion_tokens),
+                    "request_tokens": int(agg.get("request_tokens", 0) or 0),
+                    "prompt_tokens": int(agg.get("prompt_tokens", 0) or 0),
+                    "completion_tokens": int(agg.get("completion_tokens", 0) or 0),
+                    "sync_status": str(row["status"] or ""),
+                    "trigger": str(row["trigger"] or ""),
                 }
             )
         return points

@@ -322,6 +322,7 @@ class PipelineMixin:
                     )
 
             new_candidates: dict[str, EventRecord] = {}
+            newly_imported_sync_ids: set[str] = set()
             for item in new_window_events:
                 if item.uid:
                     new_candidates[item.uid] = item
@@ -352,6 +353,7 @@ class PipelineMixin:
                         mapping=mapping,
                         stack_calendar_id=stack_info.calendar_id,
                     )
+                    newly_imported_sync_ids.add(sync_id)
                 self.state_store.enqueue_pending_new_cleanup(
                     new_uid=item.uid,
                     new_href=item.href,
@@ -399,12 +401,18 @@ class PipelineMixin:
                     and event.start is not None
                     and event.start.astimezone(timezone.utc) <= freeze_cutoff
                 )
-                if not _event_locked_for_ai(event) and not frozen and _event_has_user_intent(event):
+                has_user_intent = _event_has_user_intent(event)
+                is_newly_imported = sync_id in newly_imported_sync_ids
+                if not _event_locked_for_ai(event) and not frozen and (has_user_intent or is_newly_imported):
+                    if has_user_intent:
+                        target_intent = _extract_user_intent(event)
+                    else:
+                        target_intent = "Arrange this newly imported event into the schedule."
                     target_events_payload.append(
                         {
                             "calendar_id": event.calendar_id,
                             "uid": event.uid,
-                            "user_intent": _extract_user_intent(event),
+                            "user_intent": target_intent,
                             "editable_fields": _extract_editable_fields(event, list(config.task_defaults.editable_fields)),
                         }
                     )

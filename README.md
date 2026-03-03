@@ -55,11 +55,11 @@ Avocado is a CalDAV-oriented AI scheduling service that can:
 ### 3. Admin Port Mapping
 
 `docker-compose.yml` contains explicit admin mapping:
-- `${AVOCADO_ADMIN_PORT:-18080}:8080`
+- `${AVOCADO_ADMIN_PORT:-1443}:8080`
 
 Meaning:
 - container admin service listens on `8080`
-- host port defaults to `18080`
+- host port defaults to `1443`
 - override host port with environment variable `AVOCADO_ADMIN_PORT`
 
 PowerShell example:
@@ -77,7 +77,7 @@ PowerShell example:
 2. Logs:
    - `docker compose logs -f avocado`
 3. Health check:
-   - default: `GET http://127.0.0.1:18080/healthz`
+   - default: `GET http://127.0.0.1:1443/healthz`
    - custom: `GET http://127.0.0.1:<AVOCADO_ADMIN_PORT>/healthz`
 
 ### 6. Operations
@@ -90,8 +90,10 @@ PowerShell example:
 
 - host `./config.yaml` -> container `/app/config.yaml`
 - host `./ai_system_prompt.txt` -> container `/app/ai_system_prompt.txt`
+- host `./ai_task_template.yaml` -> container `/app/ai_task_template.yaml`
 - host `./data` -> container `/app/data`
 - AI prompt file defaults to `/app/ai_system_prompt.txt` (override with `AVOCADO_PROMPT_PATH`)
+- AI task template defaults to `/app/ai_task_template.yaml` (override with `AVOCADO_AI_TASK_TEMPLATE_PATH`)
 
 Recommendation:
 - backup `config.yaml` and `data/` regularly
@@ -118,7 +120,7 @@ Recommendation:
 - `GET /api/metrics/ai-request-bytes`
 
 Default Docker admin URL:
-- `http://127.0.0.1:18080`
+- `http://127.0.0.1:1443`
 
 Admin page behavior:
 - secrets are masked by default
@@ -137,7 +139,7 @@ Admin page behavior:
 - admin page supports English/Chinese UI:
   - default language follows browser language
   - manual override available from the language selector in header
-- `[AI Task]` block is simplified and includes key fields: `locked`, `editable_fields`, `category`, `user_intent`
+- `[AI Task]` block is simplified and now includes only: `locked`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
 - logs page includes an AI token-usage line chart (derived from audit action `ai_request`)
 - AI token-usage chart auto refreshes every 30s and supports custom retention days (default 90)

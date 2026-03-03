@@ -148,8 +148,8 @@ class WebAdminTests(unittest.TestCase):
         metric_resp = self.client.get("/api/metrics/ai-request-bytes?days=90&limit=100")
         self.assertEqual(metric_resp.status_code, 200)
         points = metric_resp.json().get("points", [])
-        self.assertGreaterEqual(len(points), 1)
-        self.assertGreater(int(points[-1].get("request_tokens", 0)), 0)
+        # metrics are now per sync-run; AI connectivity test should not create chart points
+        self.assertEqual(points, [])
 
     def test_calendars_marks_managed_duplicates(self) -> None:
         update = {
@@ -397,17 +397,30 @@ class WebAdminTests(unittest.TestCase):
         trigger_manual.assert_called_once()
 
     def test_ai_request_bytes_metrics_endpoint(self) -> None:
-        self.client.app.state.context.state_store.record_audit_event(
-            calendar_id="system",
-            uid="ai",
-            action="ai_request",
-            details={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        run1 = self.client.app.state.context.state_store.start_sync_run(trigger="manual", message="running")
+        self.client.app.state.context.state_store.finish_sync_run(
+            run_id=run1,
+            status="success",
+            message="done",
+            duration_ms=100,
+            changes_applied=1,
+            conflicts=0,
         )
         self.client.app.state.context.state_store.record_audit_event(
             calendar_id="system",
             uid="ai",
             action="ai_request",
-            details={"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
+            details={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            run_id=run1,
+        )
+        run2 = self.client.app.state.context.state_store.start_sync_run(trigger="manual", message="running")
+        self.client.app.state.context.state_store.finish_sync_run(
+            run_id=run2,
+            status="success",
+            message="done",
+            duration_ms=120,
+            changes_applied=0,
+            conflicts=0,
         )
         resp = self.client.get("/api/metrics/ai-request-bytes?days=90&limit=100")
         self.assertEqual(resp.status_code, 200)
@@ -415,6 +428,9 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(data["days"], 90)
         self.assertGreaterEqual(len(data["points"]), 2)
         self.assertIn("request_tokens", data["points"][-1])
+        tokens_by_id = {int(item["id"]): int(item.get("request_tokens", 0)) for item in data["points"]}
+        self.assertEqual(tokens_by_id.get(run1), 12)
+        self.assertEqual(tokens_by_id.get(run2), 0)
 
 
 if __name__ == "__main__":

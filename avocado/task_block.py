@@ -1,8 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-import re
 import logging
-from datetime import datetime, timezone
+import os
+import re
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -11,7 +12,6 @@ from avocado.core.models import (
     AI_TASK_ALL_FIELDS,
     AI_TASK_META_FIELDS,
     AI_TASK_PUBLIC_FIELDS,
-    DEFAULT_EDITABLE_FIELDS,
     TaskDefaultsConfig,
 )
 
@@ -22,10 +22,6 @@ ALLOWED_TASK_KEYS = set(AI_TASK_ALL_FIELDS)
 logger = logging.getLogger(__name__)
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _normalize_user_intent(value: Any) -> str:
     text = str(value or "").strip()
     if text.casefold() in {"", "\"\"", "''", "null", "none", "~"}:
@@ -33,14 +29,30 @@ def _normalize_user_intent(value: Any) -> str:
     return text
 
 
+def _resolve_ai_task_template_path() -> Path:
+    configured = os.getenv("AVOCADO_AI_TASK_TEMPLATE_PATH", "ai_task_template.yaml")
+    return Path(configured).expanduser()
+
+
+def _load_task_template() -> dict[str, Any]:
+    path = _resolve_ai_task_template_path()
+    if not path.exists() or not path.is_file():
+        return {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        logger.debug("Failed to read AI task template file", exc_info=True)
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
 def build_default_task(defaults: TaskDefaultsConfig) -> dict[str, Any]:
+    template = _load_task_template()
     return {
-        "version": 1,
-        "locked": bool(defaults.locked),
-        "editable_fields": list(defaults.editable_fields or DEFAULT_EDITABLE_FIELDS),
-        "category": "uncategorized",
-        "user_intent": "",
-        "updated_at": _now_iso(),
+        "locked": bool(template.get("locked", defaults.locked)),
+        "user_intent": _normalize_user_intent(template.get("user_intent", "")),
     }
 
 
@@ -73,15 +85,8 @@ def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dic
     for key in ALLOWED_TASK_KEYS:
         if key in parsed:
             normalized[key] = parsed[key]
-    editable_fields = normalized.get("editable_fields", defaults.editable_fields)
-    if not isinstance(editable_fields, list):
-        editable_fields = defaults.editable_fields
-    cleaned = [str(x).strip() for x in editable_fields if str(x).strip()]
-    normalized["editable_fields"] = cleaned or list(DEFAULT_EDITABLE_FIELDS)
     normalized["locked"] = bool(normalized.get("locked", defaults.locked))
-    normalized["category"] = str(normalized.get("category", "uncategorized")).strip() or "uncategorized"
     normalized["user_intent"] = _normalize_user_intent(normalized.get("user_intent", ""))
-    normalized["updated_at"] = str(normalized.get("updated_at") or _now_iso())
     return normalized
 
 
@@ -119,14 +124,8 @@ def set_ai_task_category(
     defaults: TaskDefaultsConfig,
     category: str,
 ) -> tuple[str, dict[str, Any], bool]:
-    updated_description, task_payload, changed = ensure_ai_task_block(description, defaults)
-    normalized_category = str(category).strip() or "uncategorized"
-    if task_payload.get("category") == normalized_category:
-        return updated_description, task_payload, changed
-    task_payload["category"] = normalized_category
-    task_payload["updated_at"] = _now_iso()
-    final_description = upsert_ai_task_block(updated_description, task_payload)
-    return final_description, task_payload, True
+    _ = category
+    return ensure_ai_task_block(description, defaults)
 
 
 def set_ai_task_user_intent(
@@ -139,7 +138,6 @@ def set_ai_task_user_intent(
     if _normalize_user_intent(task_payload.get("user_intent", "")) == normalized_intent:
         return updated_description, task_payload, changed
     task_payload["user_intent"] = normalized_intent
-    task_payload["updated_at"] = _now_iso()
     final_description = upsert_ai_task_block(updated_description, task_payload)
     return final_description, task_payload, True
 

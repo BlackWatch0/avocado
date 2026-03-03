@@ -13,6 +13,8 @@ ai:
   payload_log_path: "data/test_logs/ai_payload_exchange.jsonl"
   payload_log_max_chars: 200000
   # system_prompt is stored separately in AVOCADO_PROMPT_PATH (default: ai_system_prompt.txt at project root)
+  # [AI Task] template is stored separately in AVOCADO_AI_TASK_TEMPLATE_PATH
+  # (default: ai_task_template.yaml at project root)
 
 sync:
   window_days: 7
