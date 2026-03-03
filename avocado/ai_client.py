@@ -3,6 +3,7 @@
 import json
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,87 @@ class OpenAICompatibleClient:
             "total_tokens": max(0, total_tokens),
         }
 
+    @staticmethod
+    def _is_resource_unavailable_429(response: requests.Response) -> bool:
+        if int(getattr(response, "status_code", 0) or 0) != 429:
+            return False
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        text = " ".join(
+            [
+                str(error.get("message", "")),
+                str(error.get("type", "")),
+                str(error.get("code", "")),
+                str(getattr(response, "text", "")),
+            ]
+        ).casefold()
+        return "resource unavailable" in text or "insufficient resources" in text
+
+    def _chat_timeout_seconds(self, service_tier: str) -> int:
+        base_timeout = max(1, int(getattr(self.config, "timeout_seconds", 90) or 90))
+        if str(service_tier).strip().lower() == "flex":
+            # Flex can be slower; use at least 10 minutes unless caller configured larger timeout.
+            return max(base_timeout, 600)
+        return base_timeout
+
+    def _post_chat(self, endpoint: str, request_payload: dict[str, Any]) -> requests.Response:
+        tier = str(request_payload.get("service_tier", "") or "").strip().lower()
+        return requests.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_payload,
+            timeout=self._chat_timeout_seconds(tier),
+        )
+
+    def _post_chat_with_flex_policy(
+        self,
+        *,
+        endpoint: str,
+        request_payload: dict[str, Any],
+    ) -> tuple[requests.Response, dict[str, Any]]:
+        tier = str(request_payload.get("service_tier", "") or "").strip().lower()
+        if tier != "flex":
+            return self._post_chat(endpoint, request_payload), request_payload
+
+        # Flex policy:
+        # 1) retry resource-unavailable/timeout with exponential backoff
+        # 2) if still failing, fallback to service_tier=auto once
+        max_retries = 2
+        last_timeout_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = self._post_chat(endpoint, request_payload)
+            except requests.Timeout as exc:
+                last_timeout_error = exc
+                if attempt < max_retries:
+                    time.sleep(2**attempt)
+                    continue
+                response = None
+            if response is None:
+                break
+            if response.ok:
+                return response, request_payload
+            if self._is_resource_unavailable_429(response) and attempt < max_retries:
+                time.sleep(2**attempt)
+                continue
+            break
+
+        fallback_enabled = bool(getattr(self.config, "high_load_flex_fallback_to_auto", True))
+        if fallback_enabled:
+            fallback_payload = dict(request_payload)
+            fallback_payload["service_tier"] = "auto"
+            return self._post_chat(endpoint, fallback_payload), fallback_payload
+        if last_timeout_error is not None:
+            raise last_timeout_error
+        # If retries produced a non-ok response and fallback is disabled, send one final response up.
+        return self._post_chat(endpoint, request_payload), request_payload
+
     def generate_changes(self, *, messages: list[dict[str, str]]) -> dict[str, Any]:
         if not self.is_configured():
             return {"changes": []}
@@ -128,16 +210,15 @@ class OpenAICompatibleClient:
             "temperature": 0.2,
             "response_format": {"type": "json_object"},
         }
+        service_tier = str(getattr(self.config, "_request_service_tier", "") or "").strip().lower()
+        if service_tier in {"auto", "default", "flex"}:
+            request_payload["service_tier"] = service_tier
         response: requests.Response | None = None
+        request_payload_used = dict(request_payload)
         try:
-            response = requests.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=request_payload,
-                timeout=self.config.timeout_seconds,
+            response, request_payload_used = self._post_chat_with_flex_policy(
+                endpoint=endpoint,
+                request_payload=request_payload,
             )
             response.raise_for_status()
             payload = response.json()
@@ -146,7 +227,7 @@ class OpenAICompatibleClient:
                 api="generate_changes",
                 method="POST",
                 endpoint=endpoint,
-                request_body=request_payload,
+                request_body=request_payload_used,
                 response_status=int(response.status_code),
                 response_body=payload,
             )
@@ -171,7 +252,7 @@ class OpenAICompatibleClient:
                 api="generate_changes",
                 method="POST",
                 endpoint=endpoint,
-                request_body=request_payload,
+                request_body=request_payload_used,
                 response_status=response_status,
                 response_text=response_text,
                 error=f"{type(exc).__name__}: {exc}",

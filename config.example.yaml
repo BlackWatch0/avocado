@@ -10,6 +10,8 @@ ai:
   model: "gpt-4o-mini"
   high_load_model: ""         # Optional fallback model for heavy sync windows
   high_load_event_threshold: 0  # 0 disables; if planning events >= threshold, switch to high_load_model
+  high_load_use_flex: false   # If true, heavy sync windows also send service_tier=flex
+  high_load_flex_fallback_to_auto: true  # If Flex fails (timeout/resource unavailable), retry once with service_tier=auto
   timeout_seconds: 90
   payload_logging_enabled: false
   payload_log_path: "data/test_logs/ai_payload_exchange.jsonl"

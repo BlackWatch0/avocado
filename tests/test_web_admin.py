@@ -410,7 +410,7 @@ class WebAdminTests(unittest.TestCase):
             calendar_id="system",
             uid="ai",
             action="ai_request",
-            details={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            details={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12, "service_tier": "flex"},
             run_id=run1,
         )
         run2 = self.client.app.state.context.state_store.start_sync_run(trigger="manual", message="running")
@@ -428,9 +428,13 @@ class WebAdminTests(unittest.TestCase):
         self.assertEqual(data["days"], 90)
         self.assertGreaterEqual(len(data["points"]), 2)
         self.assertIn("request_tokens", data["points"][-1])
+        self.assertIn("flex_used", data["points"][-1])
         tokens_by_id = {int(item["id"]): int(item.get("request_tokens", 0)) for item in data["points"]}
+        flex_by_id = {int(item["id"]): bool(item.get("flex_used", False)) for item in data["points"]}
         self.assertEqual(tokens_by_id.get(run1), 12)
         self.assertEqual(tokens_by_id.get(run2), 0)
+        self.assertTrue(flex_by_id.get(run1))
+        self.assertFalse(flex_by_id.get(run2))
 
 
 if __name__ == "__main__":

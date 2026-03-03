@@ -200,6 +200,7 @@ class PipelineMixin:
 
             stack_state: dict[str, EventRecord] = {}
             deleted_sync_ids: set[str] = set()
+            newly_imported_sync_ids: set[str] = set()
             locked_source_calendar_ids = set(config.calendar_rules.locked_calendar_ids or [])
 
             for calendar in external_calendars:
@@ -208,6 +209,7 @@ class PipelineMixin:
                         continue
                     if ("ext", calendar.calendar_id, event.uid) in active_tombstones:
                         continue
+                    existed = mapping_by_source.get(("ext", calendar.calendar_id, event.uid)) is not None
                     mapping = self._ensure_mapping(
                         source="ext",
                         source_calendar_id=calendar.calendar_id,
@@ -227,6 +229,8 @@ class PipelineMixin:
                     if calendar.calendar_id in locked_source_calendar_ids:
                         stack_event.locked = True
                     stack_state[str(mapping["sync_id"])] = stack_event
+                    if not existed:
+                        newly_imported_sync_ids.add(str(mapping["sync_id"]))
 
             for user_event in sorted(user_window_events, key=lambda item: (item.uid or "", item.href or "")):
                 if not user_event.uid:
@@ -322,7 +326,6 @@ class PipelineMixin:
                     )
 
             new_candidates: dict[str, EventRecord] = {}
-            newly_imported_sync_ids: set[str] = set()
             for item in new_window_events:
                 if item.uid:
                     new_candidates[item.uid] = item
@@ -428,8 +431,10 @@ class PipelineMixin:
                     selected_model = str(config.ai.model or "").strip()
                     high_load_model = str(getattr(config.ai, "high_load_model", "") or "").strip()
                     high_load_threshold = int(getattr(config.ai, "high_load_event_threshold", 0) or 0)
-                    if high_load_model and high_load_threshold > 0 and len(planning_events) >= high_load_threshold:
+                    high_load_active = high_load_threshold > 0 and len(planning_events) >= high_load_threshold
+                    if high_load_model and high_load_active:
                         selected_model = high_load_model
+                    use_flex_tier = bool(getattr(config.ai, "high_load_use_flex", False)) and high_load_active
                     payload_calendar_to_real = {"stack": stack_info.calendar_id}
                     real_to_payload_calendar = {v: k for k, v in payload_calendar_to_real.items()}
                     payload_events: list[dict[str, Any]] = []
@@ -460,15 +465,20 @@ class PipelineMixin:
                         "temperature": 0.2,
                         "response_format": {"type": "json_object"},
                     }
+                    if use_flex_tier:
+                        request_payload["service_tier"] = "flex"
                     request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
                     client_config = getattr(ai_client, "config", None)
                     if client_config is not None and hasattr(client_config, "model"):
                         original_model = str(getattr(client_config, "model", "") or "").strip()
+                        original_service_tier = str(getattr(client_config, "_request_service_tier", "") or "").strip()
                         client_config.model = selected_model
+                        client_config._request_service_tier = "flex" if use_flex_tier else ""
                         try:
                             raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
                         finally:
                             client_config.model = original_model
+                            client_config._request_service_tier = original_service_tier
                     else:
                         raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
                     for change in raw_changes:
@@ -492,6 +502,7 @@ class PipelineMixin:
                             "ai_input_hash": ai_input_hash,
                             "model": selected_model,
                             "high_load_model_active": bool(selected_model != str(config.ai.model or "").strip()),
+                            "service_tier": "flex" if use_flex_tier else "",
                         },
                     )
                 else:

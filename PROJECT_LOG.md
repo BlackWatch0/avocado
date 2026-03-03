@@ -134,6 +134,12 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-075 | 外部日历新导入事件触发 AI 排程 | Done | 首次从外部日历（非 managed）导入到 stage 的事件，即使无 `user_intent` 也进入 AI target，避免“只导入不排程” | P0 | AVO-068 | 2026-03-03 |
+| AVO-074 | AI Token 图标记 Flex 成功请求（绿色点） | Done | 指标点新增 `flex_used`，图表将成功 Flex 请求点渲染为绿色；普通/非 Flex 点保持蓝色 | P2 | AVO-071, AVO-072 | 2026-03-03 |
+| AVO-073 | 托管日历缺失恢复与 Flex 失败回退增强 | Done | 托管日历 ID 丢失时：同名=0 自动重建、同名>1 拒绝并报错；Flex 请求支持超时/429 退避重试并可回退到 `service_tier=auto`，后台可开关 | P0 | AVO-070, AVO-072 | 2026-03-03 |
+| AVO-072 | Flex 档位超时与资源不足重试策略 | Done | Flex 请求默认使用更长超时（>=10分钟），遇到 timeout/429 resource unavailable 进行指数退避重试；可配置回退到 `service_tier=auto` 保障成功率 | P1 | AVO-071 | 2026-03-03 |
+| AVO-071 | 高负载阈值触发 Flex 档位开关 | Done | 新增 `ai.high_load_use_flex`；当事件数达到高负载阈值且开关开启时，AI 请求携带 `service_tier=flex`；后台可配置并落盘 | P1 | AVO-069 | 2026-03-03 |
+| AVO-070 | 防止刷新日历/错误ID触发重复托管日历创建 | Done | `/api/calendars` 仅列表不再隐式 ensure/create；当配置了 `calendar_id` 但无法匹配时拒绝自动新建同名托管日历并报错，避免重复扩散 | P0 | AVO-058 | 2026-03-03 |
 | AVO-069 | 高负载自动切换更强模型（按事件数阈值） | Done | 新增 `ai.high_load_model` 与 `ai.high_load_event_threshold`；当本轮规划事件数达到阈值时自动使用高负载模型；后台可配置并落盘 | P1 | AVO-068 | 2026-03-03 |
 | AVO-068 | 新导入日程无意图也触发一次 AI 安排 | Done | 本轮从 `new` 日历导入到 stage 的事件，即使 `user_intent` 为空也会进入 `target_events` 并触发 AI 请求；无新导入且无意图时仍跳过 | P0 | AVO-067 | 2026-03-03 |
 | AVO-067 | `[AI Task]` 标签精简与模板文件独立化 | Done | 注入时仅保留 `locked/user_intent`；不再自动写入 `version/editable_fields/category/updated_at`；模板改为独立 `ai_task_template.yaml` 文件加载 | P1 | AVO-063 | 2026-03-03 |

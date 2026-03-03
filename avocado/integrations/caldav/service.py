@@ -69,6 +69,7 @@ class CalDAVService(CalendarOpsMixin, DeltaOpsMixin):
     def ensure_managed_calendar(self, calendar_id: str, calendar_name: str) -> CalendarInfo:
         self._connect()
         calendars = self.list_calendars()
+        calendar_id_raw = str(calendar_id or "").strip()
         calendar_id_norm = normalize_calendar_id(calendar_id)
         calendar_id_path = normalize_calendar_path(calendar_id)
         if calendar_id_norm:
@@ -80,12 +81,22 @@ class CalDAVService(CalendarOpsMixin, DeltaOpsMixin):
                 if normalize_calendar_path(info.calendar_id) == calendar_id_path:
                     return info
         calendar_name_norm = normalize_calendar_name(calendar_name)
+        same_name: list[CalendarInfo] = []
         if calendar_name_norm:
             same_name = [
                 info for info in calendars if normalize_calendar_name(info.name) == calendar_name_norm
             ]
-            if same_name:
+            if same_name and not calendar_id_raw:
                 same_name.sort(key=lambda item: item.calendar_id)
+                return same_name[0]
+
+        if calendar_id_raw:
+            if len(same_name) > 1:
+                raise RuntimeError(
+                    f"Managed calendar not found for configured id: {calendar_id_raw}. "
+                    "Multiple same-name calendars exist; refusing to auto-select or auto-create duplicate."
+                )
+            if len(same_name) == 1:
                 return same_name[0]
 
         calendar = self._principal.make_calendar(name=calendar_name)

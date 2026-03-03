@@ -170,6 +170,7 @@ class _CountingAIClient:
 class _ModelCaptureAIClient:
     calls = 0
     models: list[str] = []
+    service_tiers: list[str] = []
 
     def __init__(self, config) -> None:
         self.config = config
@@ -182,6 +183,7 @@ class _ModelCaptureAIClient:
         _ = messages
         _ModelCaptureAIClient.calls += 1
         _ModelCaptureAIClient.models.append(str(self.config.model))
+        _ModelCaptureAIClient.service_tiers.append(str(getattr(self.config, "_request_service_tier", "")))
         return {"changes": []}
 
 
@@ -404,6 +406,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             engine = SyncEngine(manager, store)
             _ModelCaptureAIClient.calls = 0
             _ModelCaptureAIClient.models = []
+            _ModelCaptureAIClient.service_tiers = []
 
             with (
                 mock.patch("avocado.sync.pipeline.CalDAVService", _ManyEventsCalDAVService),
@@ -420,7 +423,137 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             self.assertEqual(ai_request_events[-1]["details"].get("model"), "gpt-5")
             self.assertTrue(bool(ai_request_events[-1]["details"].get("high_load_model_active")))
 
+    def test_high_load_flex_tier_is_enabled_by_switch(self) -> None:
+        class _ManyEventsCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                self._events[self.user_id] = {}
+                self._events[self.new_id] = {}
+                for idx in range(4):
+                    uid = f"new-flex-uid-{idx}"
+                    self._events[self.new_id][uid] = EventRecord(
+                        calendar_id=self.new_id,
+                        uid=uid,
+                        summary=f"Imported Flex Event {idx}",
+                        description="intake item",
+                        start=now + timedelta(hours=idx + 2),
+                        end=now + timedelta(hours=idx + 3),
+                        etag=f"new-flex-etag-{idx}",
+                    )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-4o-mini",
+                        "high_load_model": "gpt-5",
+                        "high_load_event_threshold": 3,
+                        "high_load_use_flex": True,
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _ModelCaptureAIClient.calls = 0
+            _ModelCaptureAIClient.models = []
+            _ModelCaptureAIClient.service_tiers = []
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _ManyEventsCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _ModelCaptureAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_ModelCaptureAIClient.calls, 1)
+            self.assertEqual(_ModelCaptureAIClient.models[-1], "gpt-5")
+            self.assertEqual(_ModelCaptureAIClient.service_tiers[-1], "flex")
+            audit_events = store.recent_audit_events(limit=200)
+            ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
+            self.assertTrue(ai_request_events)
+            self.assertEqual(ai_request_events[-1]["details"].get("service_tier"), "flex")
+
+    def test_external_calendar_new_import_triggers_ai_without_intent(self) -> None:
+        class _ExternalImportCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                self.ext_id = "cal-ext"
+                self._calendars.append(
+                    CalendarInfo(calendar_id=self.ext_id, name="Personal", url=self.ext_id)
+                )
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                self._events[self.user_id] = {}
+                self._events[self.new_id] = {}
+                self._events[self.ext_id] = {
+                    "ext-uid-1": EventRecord(
+                        calendar_id=self.ext_id,
+                        uid="ext-uid-1",
+                        summary="External Imported Event",
+                        description="from personal calendar",
+                        start=now + timedelta(hours=6),
+                        end=now + timedelta(hours=7),
+                        etag="ext-etag-1",
+                    )
+                }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _CountingAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _ExternalImportCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _CountingAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_CountingAIClient.calls, 1)
+            audit_events = store.recent_audit_events(limit=200)
+            self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
+
 
 if __name__ == "__main__":
     unittest.main()
-

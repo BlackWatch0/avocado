@@ -10,6 +10,8 @@ class ModelsTests(unittest.TestCase):
         self.assertTrue(bool(cfg.system_prompt.strip()))
         self.assertEqual(cfg.high_load_model, "")
         self.assertEqual(cfg.high_load_event_threshold, 0)
+        self.assertFalse(cfg.high_load_use_flex)
+        self.assertTrue(cfg.high_load_flex_fallback_to_auto)
 
     def test_ai_config_high_load_fields(self) -> None:
         cfg = AIConfig.from_dict(
@@ -22,6 +24,28 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(cfg.model, "gpt-4o-mini")
         self.assertEqual(cfg.high_load_model, "gpt-5")
         self.assertEqual(cfg.high_load_event_threshold, 20)
+        self.assertFalse(cfg.high_load_use_flex)
+        self.assertTrue(cfg.high_load_flex_fallback_to_auto)
+
+    def test_ai_config_high_load_flex_flag(self) -> None:
+        cfg = AIConfig.from_dict(
+            {
+                "high_load_model": "gpt-5",
+                "high_load_event_threshold": 12,
+                "high_load_use_flex": True,
+            }
+        )
+        self.assertTrue(cfg.high_load_use_flex)
+
+    def test_ai_config_high_load_flex_fallback_flag(self) -> None:
+        cfg = AIConfig.from_dict(
+            {
+                "high_load_use_flex": True,
+                "high_load_flex_fallback_to_auto": False,
+            }
+        )
+        self.assertTrue(cfg.high_load_use_flex)
+        self.assertFalse(cfg.high_load_flex_fallback_to_auto)
 
     def test_calendar_rules_fields_use_stack_user_new(self) -> None:
         cfg = CalendarRulesConfig.from_dict(
@@ -44,4 +68,3 @@ class ModelsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

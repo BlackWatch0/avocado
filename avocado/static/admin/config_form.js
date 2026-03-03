@@ -16,6 +16,9 @@
   document.getElementById("ai-high-load-model").value = cfg.ai?.high_load_model || "";
   document.getElementById("ai-high-load-event-threshold").value =
     cfg.ai?.high_load_event_threshold ?? 0;
+  document.getElementById("ai-high-load-use-flex").checked = !!cfg.ai?.high_load_use_flex;
+  document.getElementById("ai-high-load-flex-fallback-auto").checked =
+    cfg.ai?.high_load_flex_fallback_to_auto !== false;
   document.getElementById("ai-timeout-seconds").value = cfg.ai?.timeout_seconds ?? 90;
   document.getElementById("ai-system-prompt").value = cfg.ai?.system_prompt || "";
 
@@ -84,6 +87,8 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
       model: document.getElementById("ai-model").value.trim(),
       high_load_model: document.getElementById("ai-high-load-model").value.trim(),
       high_load_event_threshold: highLoadEventThreshold,
+      high_load_use_flex: document.getElementById("ai-high-load-use-flex").checked,
+      high_load_flex_fallback_to_auto: document.getElementById("ai-high-load-flex-fallback-auto").checked,
       timeout_seconds: timeoutSeconds,
       system_prompt: document.getElementById("ai-system-prompt").value.trim(),
     },

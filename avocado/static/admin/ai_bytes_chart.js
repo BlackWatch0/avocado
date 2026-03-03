@@ -18,11 +18,13 @@
         return {
           time: item.created_at || "",
           tokens: Number(item.request_tokens || 0),
+          flexUsed: !!item.flex_used,
         };
       }
       return {
         time: item?.created_at || "",
         tokens: Number(item?.details?.total_tokens || 0),
+        flexUsed: String(item?.details?.service_tier || "").toLowerCase() === "flex",
       };
     })
     .filter((item) => Number.isFinite(item.tokens) && item.tokens >= 0)
@@ -76,10 +78,11 @@
   });
   ctx.stroke();
 
-  ctx.fillStyle = "#1d4ed8";
   points.forEach((p, idx) => {
     const x = padLeft + idx * xStep;
     const y = padTop + plotH - (p.tokens / yMax) * plotH;
+    const successFlex = !!p.flexUsed && p.tokens > 0;
+    ctx.fillStyle = successFlex ? "#16a34a" : "#1d4ed8";
     ctx.beginPath();
     ctx.arc(x, y, 2.4, 0, Math.PI * 2);
     ctx.fill();

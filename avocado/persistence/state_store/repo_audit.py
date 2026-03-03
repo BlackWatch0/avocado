@@ -115,6 +115,7 @@ class AuditRepoMixin:
                         tuple(run_ids),
                     ).fetchall()
         tokens_by_run: dict[int, dict[str, int]] = {}
+        flex_by_run: dict[int, bool] = {}
         for row in ai_rows:
             run_id = int(row["run_id"])
             try:
@@ -124,6 +125,7 @@ class AuditRepoMixin:
             total_tokens = self._extract_total_tokens(details if isinstance(details, dict) else {})
             prompt_tokens = int((details or {}).get("prompt_tokens", 0) or 0)
             completion_tokens = int((details or {}).get("completion_tokens", 0) or 0)
+            service_tier = str((details or {}).get("service_tier", "") or "").strip().lower()
             agg = tokens_by_run.setdefault(
                 run_id,
                 {"request_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0},
@@ -131,6 +133,8 @@ class AuditRepoMixin:
             agg["request_tokens"] += max(0, total_tokens)
             agg["prompt_tokens"] += max(0, prompt_tokens)
             agg["completion_tokens"] += max(0, completion_tokens)
+            if service_tier == "flex":
+                flex_by_run[run_id] = True
         points: list[dict[str, Any]] = []
         for row in reversed(run_rows):
             created_at = str(row["run_at"] or "")
@@ -154,6 +158,7 @@ class AuditRepoMixin:
                     "request_tokens": int(agg.get("request_tokens", 0) or 0),
                     "prompt_tokens": int(agg.get("prompt_tokens", 0) or 0),
                     "completion_tokens": int(agg.get("completion_tokens", 0) or 0),
+                    "flex_used": bool(flex_by_run.get(run_id, False)),
                     "sync_status": str(row["status"] or ""),
                     "trigger": str(row["trigger"] or ""),
                 }

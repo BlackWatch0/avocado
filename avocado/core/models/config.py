@@ -29,6 +29,8 @@ class AIConfig:
     model: str = "gpt-4o-mini"
     high_load_model: str = ""
     high_load_event_threshold: int = 0
+    high_load_use_flex: bool = False
+    high_load_flex_fallback_to_auto: bool = True
     timeout_seconds: int = 90
     enabled: bool = True
     system_prompt: str = DEFAULT_AI_SYSTEM_PROMPT
@@ -46,6 +48,8 @@ class AIConfig:
             model=str(data.get("model", "gpt-4o-mini")).strip() or "gpt-4o-mini",
             high_load_model=str(data.get("high_load_model", "")).strip(),
             high_load_event_threshold=max(0, int(data.get("high_load_event_threshold", 0))),
+            high_load_use_flex=bool(data.get("high_load_use_flex", False)),
+            high_load_flex_fallback_to_auto=bool(data.get("high_load_flex_fallback_to_auto", True)),
             timeout_seconds=int(data.get("timeout_seconds", 90)),
             enabled=bool(data.get("enabled", True)),
             system_prompt=str(data.get("system_prompt", DEFAULT_AI_SYSTEM_PROMPT)).strip()

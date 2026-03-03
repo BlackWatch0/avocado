@@ -15,29 +15,6 @@ def register_calendar_routes(app: FastAPI) -> None:
         config = app.state.context.config_manager.load()
         service = CalDAVService(config.caldav)
         try:
-            if config.caldav.base_url and config.caldav.username:
-                stack_info = service.ensure_managed_calendar(
-                    config.calendar_rules.stack_calendar_id,
-                    config.calendar_rules.stack_calendar_name,
-                )
-                user_info = service.ensure_managed_calendar(
-                    config.calendar_rules.user_calendar_id,
-                    config.calendar_rules.user_calendar_name,
-                )
-                new_info = service.ensure_managed_calendar(
-                    config.calendar_rules.new_calendar_id,
-                    config.calendar_rules.new_calendar_name,
-                )
-                updates: dict[str, Any] = {"calendar_rules": {}}
-                if config.calendar_rules.stack_calendar_id != stack_info.calendar_id:
-                    updates["calendar_rules"]["stack_calendar_id"] = stack_info.calendar_id
-                if config.calendar_rules.user_calendar_id != user_info.calendar_id:
-                    updates["calendar_rules"]["user_calendar_id"] = user_info.calendar_id
-                if config.calendar_rules.new_calendar_id != new_info.calendar_id:
-                    updates["calendar_rules"]["new_calendar_id"] = new_info.calendar_id
-                if updates["calendar_rules"]:
-                    app.state.context.config_manager.update(updates)
-                    config = app.state.context.config_manager.load()
             calendars = service.list_calendars()
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

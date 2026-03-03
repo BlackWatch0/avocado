@@ -64,6 +64,71 @@ class AIClientPayloadLoggingTests(unittest.TestCase):
             self.assertIn("HTTPError", payload["error"])
             self.assertTrue(payload["response_text"])
 
+    def test_generate_changes_flex_429_retries_then_fallback_auto(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "ai_payload_exchange.jsonl"
+            client = self._make_client(log_path)
+            client.config._request_service_tier = "flex"
+
+            mock_429 = mock.Mock()
+            mock_429.status_code = 429
+            mock_429.ok = False
+            mock_429.text = "resource unavailable"
+            mock_429.json.return_value = {"error": {"message": "Resource unavailable"}}
+            mock_429.raise_for_status.side_effect = requests.HTTPError("429 Resource Unavailable")
+
+            mock_ok = mock.Mock()
+            mock_ok.status_code = 200
+            mock_ok.ok = True
+            mock_ok.raise_for_status.return_value = None
+            mock_ok.json.return_value = {
+                "choices": [{"message": {"content": '{"changes": []}'}}],
+            }
+
+            with (
+                mock.patch("avocado.ai_client.requests.post", side_effect=[mock_429, mock_429, mock_429, mock_ok]) as post_mock,
+                mock.patch("avocado.ai_client.time.sleep", return_value=None),
+            ):
+                result = client.generate_changes(messages=[{"role": "user", "content": "test"}])
+
+            self.assertEqual(result, {"changes": []})
+            self.assertEqual(post_mock.call_count, 4)
+            last_call_json = post_mock.call_args.kwargs.get("json", {})
+            self.assertEqual(last_call_json.get("service_tier"), "auto")
+            lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 1)
+            payload = json.loads(lines[0])
+            self.assertEqual(payload["response_status"], 200)
+            self.assertEqual(payload["request"].get("service_tier"), "auto")
+
+    def test_generate_changes_flex_timeout_fallback_auto(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "ai_payload_exchange.jsonl"
+            client = self._make_client(log_path)
+            client.config._request_service_tier = "flex"
+
+            mock_ok = mock.Mock()
+            mock_ok.status_code = 200
+            mock_ok.ok = True
+            mock_ok.raise_for_status.return_value = None
+            mock_ok.json.return_value = {
+                "choices": [{"message": {"content": '{"changes": []}'}}],
+            }
+
+            with (
+                mock.patch(
+                    "avocado.ai_client.requests.post",
+                    side_effect=[requests.Timeout("timeout"), requests.Timeout("timeout"), requests.Timeout("timeout"), mock_ok],
+                ) as post_mock,
+                mock.patch("avocado.ai_client.time.sleep", return_value=None),
+            ):
+                result = client.generate_changes(messages=[{"role": "user", "content": "test"}])
+
+            self.assertEqual(result, {"changes": []})
+            self.assertEqual(post_mock.call_count, 4)
+            last_call_json = post_mock.call_args.kwargs.get("json", {})
+            self.assertEqual(last_call_json.get("service_tier"), "auto")
+
 
 if __name__ == "__main__":
     unittest.main()

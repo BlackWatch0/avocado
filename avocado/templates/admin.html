@@ -64,6 +64,8 @@
         </label>
         <label><span data-i18n="field.high_load_model">High-Load Model</span><input id="ai-high-load-model" type="text" placeholder="e.g. gpt-5"></label>
         <label><span data-i18n="field.high_load_event_threshold">High-Load Event Threshold</span><input id="ai-high-load-event-threshold" type="number" min="0" required></label>
+        <label class="checkbox"><input id="ai-high-load-use-flex" type="checkbox"> <span data-i18n="field.high_load_use_flex">Use Flex Tier Above Threshold</span></label>
+        <label class="checkbox"><input id="ai-high-load-flex-fallback-auto" type="checkbox"> <span data-i18n="field.high_load_flex_fallback_to_auto">Fallback to Auto Tier if Flex Fails</span></label>
         <label><span data-i18n="field.timeout_seconds">Timeout Seconds</span><input id="ai-timeout-seconds" type="number" min="1" required></label>
       </section>
 
