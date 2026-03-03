@@ -13,6 +13,9 @@
   } else {
     modelEl.value = "";
   }
+  document.getElementById("ai-high-load-model").value = cfg.ai?.high_load_model || "";
+  document.getElementById("ai-high-load-event-threshold").value =
+    cfg.ai?.high_load_event_threshold ?? 0;
   document.getElementById("ai-timeout-seconds").value = cfg.ai?.timeout_seconds ?? 90;
   document.getElementById("ai-system-prompt").value = cfg.ai?.system_prompt || "";
 
@@ -59,10 +62,14 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
   const intervalSeconds = Number(document.getElementById("sync-interval-seconds").value || "0");
   const freezeHours = Number(document.getElementById("sync-freeze-hours").value || "0");
   const timeoutSeconds = Number(document.getElementById("ai-timeout-seconds").value || "0");
+  const highLoadEventThreshold = Number(
+    document.getElementById("ai-high-load-event-threshold").value || "0"
+  );
   if (windowDays < 1) throw new Error(t("error.window_days"));
   if (intervalSeconds < 30) throw new Error(t("error.interval_seconds"));
   if (freezeHours < 0) throw new Error(t("error.freeze_hours"));
   if (timeoutSeconds < 1) throw new Error(t("error.timeout_seconds"));
+  if (highLoadEventThreshold < 0) throw new Error(t("error.high_load_event_threshold"));
 
   return {
     caldav: {
@@ -75,6 +82,8 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
       base_url: document.getElementById("ai-base-url").value.trim(),
       api_key: document.getElementById("ai-api-key").value,
       model: document.getElementById("ai-model").value.trim(),
+      high_load_model: document.getElementById("ai-high-load-model").value.trim(),
+      high_load_event_threshold: highLoadEventThreshold,
       timeout_seconds: timeoutSeconds,
       system_prompt: document.getElementById("ai-system-prompt").value.trim(),
     },

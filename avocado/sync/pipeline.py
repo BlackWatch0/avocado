@@ -425,6 +425,11 @@ class PipelineMixin:
             if config.ai.enabled and target_events_payload and ai_input_hash != last_ai_hash:
                 ai_client = OpenAICompatibleClient(config.ai)
                 if ai_client.is_configured():
+                    selected_model = str(config.ai.model or "").strip()
+                    high_load_model = str(getattr(config.ai, "high_load_model", "") or "").strip()
+                    high_load_threshold = int(getattr(config.ai, "high_load_event_threshold", 0) or 0)
+                    if high_load_model and high_load_threshold > 0 and len(planning_events) >= high_load_threshold:
+                        selected_model = high_load_model
                     payload_calendar_to_real = {"stack": stack_info.calendar_id}
                     real_to_payload_calendar = {v: k for k, v in payload_calendar_to_real.items()}
                     payload_events: list[dict[str, Any]] = []
@@ -450,13 +455,22 @@ class PipelineMixin:
                     )
                     messages = build_messages(payload, system_prompt=config.ai.system_prompt)
                     request_payload = {
-                        "model": config.ai.model,
+                        "model": selected_model,
                         "messages": messages,
                         "temperature": 0.2,
                         "response_format": {"type": "json_object"},
                     }
                     request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
-                    raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
+                    client_config = getattr(ai_client, "config", None)
+                    if client_config is not None and hasattr(client_config, "model"):
+                        original_model = str(getattr(client_config, "model", "") or "").strip()
+                        client_config.model = selected_model
+                        try:
+                            raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
+                        finally:
+                            client_config.model = original_model
+                    else:
+                        raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
                     for change in raw_changes:
                         if not isinstance(change, dict):
                             continue
@@ -476,6 +490,8 @@ class PipelineMixin:
                             "target_events_count": len(target_events_payload),
                             "planning_events_count": len(planning_events),
                             "ai_input_hash": ai_input_hash,
+                            "model": selected_model,
+                            "high_load_model_active": bool(selected_model != str(config.ai.model or "").strip()),
                         },
                     )
                 else:

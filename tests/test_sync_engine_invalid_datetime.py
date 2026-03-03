@@ -167,6 +167,24 @@ class _CountingAIClient:
         return {"changes": []}
 
 
+class _ModelCaptureAIClient:
+    calls = 0
+    models: list[str] = []
+
+    def __init__(self, config) -> None:
+        self.config = config
+        self.last_usage = {}
+
+    def is_configured(self) -> bool:
+        return True
+
+    def generate_changes(self, *, messages):
+        _ = messages
+        _ModelCaptureAIClient.calls += 1
+        _ModelCaptureAIClient.models.append(str(self.config.model))
+        return {"changes": []}
+
+
 class SyncEngineInvalidDatetimeTests(unittest.TestCase):
     def test_invalid_datetime_does_not_fail_whole_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -336,8 +354,73 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             audit_events = store.recent_audit_events(limit=200)
             self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
 
+    def test_high_load_model_is_used_when_event_count_exceeds_threshold(self) -> None:
+        class _ManyEventsCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                self._events[self.user_id] = {}
+                self._events[self.new_id] = {}
+                for idx in range(4):
+                    uid = f"new-uid-{idx}"
+                    self._events[self.new_id][uid] = EventRecord(
+                        calendar_id=self.new_id,
+                        uid=uid,
+                        summary=f"Imported Event {idx}",
+                        description="intake item",
+                        start=now + timedelta(hours=idx + 2),
+                        end=now + timedelta(hours=idx + 3),
+                        etag=f"new-etag-{idx}",
+                    )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-4o-mini",
+                        "high_load_model": "gpt-5",
+                        "high_load_event_threshold": 3,
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _ModelCaptureAIClient.calls = 0
+            _ModelCaptureAIClient.models = []
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _ManyEventsCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _ModelCaptureAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_ModelCaptureAIClient.calls, 1)
+            self.assertEqual(_ModelCaptureAIClient.models[-1], "gpt-5")
+            audit_events = store.recent_audit_events(limit=200)
+            ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
+            self.assertTrue(ai_request_events)
+            self.assertEqual(ai_request_events[-1]["details"].get("model"), "gpt-5")
+            self.assertTrue(bool(ai_request_events[-1]["details"].get("high_load_model_active")))
+
 
 if __name__ == "__main__":
     unittest.main()
-
 

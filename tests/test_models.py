@@ -8,6 +8,20 @@ class ModelsTests(unittest.TestCase):
         cfg = AIConfig.from_dict({})
         self.assertEqual(cfg.base_url, "https://api.openai.com/v1")
         self.assertTrue(bool(cfg.system_prompt.strip()))
+        self.assertEqual(cfg.high_load_model, "")
+        self.assertEqual(cfg.high_load_event_threshold, 0)
+
+    def test_ai_config_high_load_fields(self) -> None:
+        cfg = AIConfig.from_dict(
+            {
+                "model": "gpt-4o-mini",
+                "high_load_model": "gpt-5",
+                "high_load_event_threshold": 20,
+            }
+        )
+        self.assertEqual(cfg.model, "gpt-4o-mini")
+        self.assertEqual(cfg.high_load_model, "gpt-5")
+        self.assertEqual(cfg.high_load_event_threshold, 20)
 
     def test_calendar_rules_fields_use_stack_user_new(self) -> None:
         cfg = CalendarRulesConfig.from_dict(
@@ -30,5 +44,4 @@ class ModelsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

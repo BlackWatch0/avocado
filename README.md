@@ -49,6 +49,7 @@ Avocado is a CalDAV-oriented AI scheduling service that can:
 2. Edit `config.yaml`:
    - `caldav.base_url`, `caldav.username`, `caldav.password`
    - `ai.base_url`, `ai.api_key`, `ai.model`
+   - optional heavy-load switch: `ai.high_load_model`, `ai.high_load_event_threshold`
    - optional `sync.window_days`, `sync.interval_seconds`, `sync.timezone_source`, `sync.timezone`
    - AI system prompt is stored separately at `ai_system_prompt.txt` (managed in admin page)
 
@@ -134,6 +135,7 @@ Admin page behavior:
 - AI Base URL defaults to `https://api.openai.com/v1`
 - API connectivity test is available as a blue inline link directly below AI Base URL
 - after connectivity test, available models are loaded into Model dropdown
+- optional: configure a High-Load Model + event threshold; when planning event count reaches threshold, sync switches to that model for this run
 - AI system prompt can be edited directly in admin page
 - timezone uses dropdown selection (with custom fallback option when needed)
 - admin page supports English/Chinese UI:

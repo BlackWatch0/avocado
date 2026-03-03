@@ -134,6 +134,7 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-069 | 高负载自动切换更强模型（按事件数阈值） | Done | 新增 `ai.high_load_model` 与 `ai.high_load_event_threshold`；当本轮规划事件数达到阈值时自动使用高负载模型；后台可配置并落盘 | P1 | AVO-068 | 2026-03-03 |
 | AVO-068 | 新导入日程无意图也触发一次 AI 安排 | Done | 本轮从 `new` 日历导入到 stage 的事件，即使 `user_intent` 为空也会进入 `target_events` 并触发 AI 请求；无新导入且无意图时仍跳过 | P0 | AVO-067 | 2026-03-03 |
 | AVO-067 | `[AI Task]` 标签精简与模板文件独立化 | Done | 注入时仅保留 `locked/user_intent`；不再自动写入 `version/editable_fields/category/updated_at`；模板改为独立 `ai_task_template.yaml` 文件加载 | P1 | AVO-063 | 2026-03-03 |
 | AVO-066 | Docker 默认管理端口改为 1443 | Done | `docker compose up -d --build` 后默认映射 `1443:8080`，重启无需额外指定端口 | P2 | AVO-011 | 2026-03-03 |
