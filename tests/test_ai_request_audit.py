@@ -220,14 +220,11 @@ class AIRequestAuditTests(unittest.TestCase):
                             break
                     if isinstance(user_payload, dict):
                         captured_payloads.append(user_payload)
-                    events = user_payload.get("events", []) if isinstance(user_payload, dict) else []
-                    target_uid = ""
-                    if isinstance(events, list) and events:
-                        target_uid = str((events[0] or {}).get("uid", "")).strip()
+                    target_uids = user_payload.get("target_uids", []) if isinstance(user_payload, dict) else []
+                    target_uid = str((target_uids[0] if target_uids else "") or "").strip()
                     return {
                         "changes": [
                             {
-                                "calendar_id": _FakeCalDAVService.stack_calendar_id,
                                 "uid": target_uid,
                                 "start": new_start.isoformat(),
                                 "end": new_end.isoformat(),
@@ -247,16 +244,23 @@ class AIRequestAuditTests(unittest.TestCase):
                 self.assertEqual(calls["count"], 1)
                 self.assertGreaterEqual(len(captured_payloads), 1)
                 first_payload = captured_payloads[0]
-                payload_events = first_payload.get("events", [])
+                payload_events = first_payload.get("events_by_uid", {})
+                self.assertIsInstance(payload_events, dict)
                 self.assertGreaterEqual(len(payload_events), 1)
-                self.assertTrue(all(str((item or {}).get("calendar_id", "")) == "stack" for item in payload_events))
-                first_event = payload_events[0] or {}
-                self.assertIn("ai_task", first_event)
+                target_uids = first_payload.get("target_uids", [])
+                self.assertIsInstance(target_uids, list)
+                self.assertGreaterEqual(len(target_uids), 1)
+                first_target_uid = str(target_uids[0] or "").strip()
+                self.assertIn(first_target_uid, payload_events)
+                first_event = payload_events[first_target_uid] or {}
+                self.assertIn("t", first_event)
+                self.assertIn("s", first_event)
+                self.assertIn("k", first_event)
+                self.assertNotIn("calendar_id", first_event)
                 self.assertNotIn("x-version", first_event)
                 self.assertNotIn("x-editable_fields", first_event)
                 self.assertNotIn("x-updated_at", first_event)
-                self.assertEqual(set((first_event.get("ai_task") or {}).keys()), {"locked", "user_intent"})
-                self.assertNotIn("[AI Task]", str(first_event.get("description", "")))
+                self.assertNotIn("[AI Task]", str(first_event.get("d", "")))
 
                 user_events = list(fake_service.events_by_calendar[_FakeCalDAVService.user_calendar_id].values())
                 self.assertGreaterEqual(len(user_events), 1)

@@ -1,6 +1,6 @@
 ﻿# Avocado Project Log
 
-最后更新: 2026-03-03
+最后更新: 2026-03-04
 
 ## 文档说明（固定模板）
 - 记录格式模板（改动历史）: `YYYY-MM-DD | 变更主题 | 文件 | 行为变化 | 风险/回滚 | TODO`
@@ -33,12 +33,14 @@
 
 ### 数据与接口约定
 - `[AI Task]` 模块放置于事件 `DESCRIPTION` 字段，采用结构化 YAML 块。
-- `[AI Task]` 至少包含字段: `locked`、`editable_fields`、`user_intent`、`updated_at`。
+- `[AI Task]` 规范块当前最小字段为 `locked`、`user_intent`；`editable_fields/version/updated_at` 等内部字段不再写入用户可见块。
 - 用户层事件 UID 使用 namespaced 格式；若遇到历史 UID 冲突，写入会跳过并记录 `skip_seed_uid_conflict` 审计事件。
 - 若存在同名托管日历（stack/user/new）副本，副本不再参与源数据复制，且会清理其窗口内事件避免重复展示。
 - 管理页面支持中英文双语；默认按浏览器语言自动选择，用户可手动切换并持久化偏好。
 - AI 改动仅作用于 `user_intent` 非空的事件；无意图事件即使 AI 返回变更也会被跳过并记录审计。
-- AI 规划请求仅把 `user_intent` 非空且未锁定事件作为 `target_events`；其余事件仅作为上下文约束，避免误改与 token 浪费。
+- AI 规划请求仅把 `user_intent` 非空且未锁定事件作为 `target_uids`；其余事件仅作为上下文约束，避免误改与 token 浪费。
+- AI 规划 payload 使用紧凑结构 `events_by_uid`（最小字段 `t/s/l/d/k/i`），默认不发送 `x-* / etag / href / source / original_*` 等冗余字段。
+- AI 返回支持 `changes + creates`：`changes` 可仅依赖 `uid`；`creates` 用于新建/拆分事件（原事件为第 1 段，后续段走 `creates`）。
 - 定时同步（`trigger=scheduled`）在 planning payload 未变化时跳过 AI 请求，并记录 `skip_ai_same_payload` 审计，避免重复消耗 token。
 - 配置文件为 `config.yaml`，关键字段:
   - CalDAV: `base_url`、`username`、`password`
@@ -62,6 +64,8 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-03-04 | AVO-092：AI Payload 压缩 + 支持拆分/新建日程（UID 重建） | `avocado/planner.py`, `avocado/sync/pipeline.py`, `ai_system_prompt.txt`, `tests/test_planner.py`, `tests/test_ai_request_audit.py`, `tests/test_sync_engine_invalid_datetime.py`, `README.md` | AI 规划输入改为 `compact_v1`（`events_by_uid + target_uids`），显著减少冗余字段；新增 AI 输出 `creates` 支持，允许“改原事件 + 新建后续段”拆分；`changes` 支持仅靠 `uid` 重建映射；新增创建守卫（每轮上限、每父事件分段上限、父事件锁定校验、时间合法性校验）与幂等 `source_uid`；审计新增 payload 压缩统计字段 | 风险中等；prompt 与模型输出需遵循新 schema，若兼容异常可回退到旧 payload 结构与仅 `changes` 处理链路 | AVO-092 |
+| 2026-03-03 | AVO-091：跨天调整后旧时段残留修复 | `avocado/sync/pipeline.py`, `tests/test_sync_engine_invalid_datetime.py` | AI 本轮成功改动的事件即使被调整到窗口外，也会继续参与本轮 stack/user 写回，避免原时段事件未更新/残留；补充窗口过滤场景回归用例 | 风险低；会对“本轮 AI 改动事件”执行跨窗口写回（预期行为） | AVO-091 |
 | 2026-03-03 | `new` 队列中断恢复：非空即继续入栈并触发 AI | `avocado/sync/pipeline.py`, `tests/test_sync_engine_invalid_datetime.py` | 修复 `new` 中已有历史 mapping 的事件被遗漏问题；`new` 非空（窗口内）时会强制重新入栈并加入 AI 目标，不再被 `same_input_hash` 跳过，确保中断后可恢复处理 | 风险低；若 `new` 清理连续失败，会持续触发 AI（符合“直到处理完成”为止） | AVO-090 |
 | 2026-03-03 | 来源日历锁定传播修复（配置变更同步到事件块） | `avocado/sync/pipeline.py`, `avocado/task_block.py`, `tests/test_task_block.py`, `tests/test_sync_engine_source_layer.py` | 修复来源锁定未正确落到 `[AI Task].locked` 的问题：同步时会按 `event.locked` 强制回写任务块锁定值；用户层合并不会覆盖外部锁定来源；日历名含 `[L]` 也会在同步时视为锁定来源，确保管理页改动可传递到已有事件 | 风险低；若用户需要手工覆盖来源锁定，应先取消来源锁定再编辑单事件 | AVO-089 |
 | 2026-03-03 | 防止孤立 `[AI Task]` 标记导致双块 | `avocado/task_block.py`, `tests/test_task_block.py` | 当描述中存在孤立的 `[AI Task]`/`[/AI Task]` 行（无完整块）时，写回前会自动清理，再注入规范块，避免出现“空标记+完整块”重复结构 | 风险低；若用户正文确实想保留该字面行会被清理 | AVO-088 |
@@ -128,11 +132,9 @@
 ### Todo
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
-| AVO-008 | 真实 CalDAV 端到端兼容验证（Nextcloud/iCloud） | Todo | 在至少 2 种服务器上完成拉取、写回、冲突场景验证并记录差异 | P0 | AVO-005, AVO-006 | 2026-02-27 |
 | AVO-009 | 后台安全加固（登录认证/反向代理建议） | Todo | 提供最小认证机制或明确反向代理鉴权指南并可配置开关 | P1 | AVO-007 | 2026-02-27 |
 | AVO-010 | CI 基线（lint + unittest + docker build） | Todo | push/pull request 时自动执行基础质量校验 | P1 | AVO-002 | 2026-02-27 |
 | AVO-027 | AI 记忆与关键词学习（跨日程持续优化） | Todo | 系统可从历史日程中提炼关键词/偏好并形成可复用记忆，在新一轮排程时纳入提示词和约束，且支持查看与清理记忆 | P1 | AVO-015, AVO-024 | 2026-02-27 |
-| AVO-028 | 新建日程初始化指令（如 `/i`） | Todo | 用户创建新日程时可通过指令触发 AI 初始化，自动补全时间、时长、位置等字段，并结合历史记忆与规则生成可编辑结果 | P1 | AVO-022, AVO-027 | 2026-02-27 |
 
 ### In Progress
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
@@ -142,6 +144,10 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-092 | AI Payload 压缩 + 支持拆分/新建日程（UID 重建） | Done | 规划输入改为 `events_by_uid + target_uids` 紧凑 schema；AI 返回支持 `changes(uid-only)+creates`；创建链路具备幂等和分段/时间/锁定守卫；提示词与测试同步更新 | P0 | AVO-063, AVO-091 | 2026-03-04 |
+| AVO-091 | 跨天调整后旧事件未删除残留修复 | Done | 当 AI/同步把事件调整到隔天（超出当前窗口）后，仍在同轮写回更新，避免原时段残留重复日程 | P0 | AVO-090 | 2026-03-03 |
+| AVO-008 | 真实 CalDAV 端到端兼容验证（Nextcloud/iCloud） | Done | 在至少 2 种服务器上完成拉取、写回、冲突场景验证并记录差异 | P0 | AVO-005, AVO-006 | 2026-03-03 |
+| AVO-028 | 新建日程初始化指令（如 `/i`） | Done | 用户创建新日程时可通过指令触发 AI 初始化，自动补全时间、时长、位置等字段，并结合历史记忆与规则生成可编辑结果 | P1 | AVO-022, AVO-027 | 2026-03-03 |
 | AVO-090 | `new` 遗留事件恢复处理与强制触发 AI | Done | 当 `new` 中存在未清理遗留事件（含已有 mapping）时，下一轮仍会入栈并触发 AI；不再因 `same_input_hash` 跳过 | P0 | AVO-068 | 2026-03-03 |
 | AVO-089 | 来源日历锁定向事件 `[AI Task].locked` 传播 | Done | 管理页锁定来源后，下一轮同步会把对应已有/新增事件的任务块 `locked` 更新为 `true`；用户层合并不再回退该锁定；`[L]` 命名锁定在同步侧生效 | P0 | AVO-086 | 2026-03-03 |
 | AVO-088 | 清理孤立 `[AI Task]` 标记避免双块 | Done | AI 返回描述中若出现孤立 `[AI Task]` 行，系统写回前自动清理并仅保留一个规范块 | P0 | AVO-063 | 2026-03-03 |
@@ -241,6 +247,6 @@
 - 目前测试以单元测试为主，尚未包含真实服务器集成测试。
 
 ### 下一阶段目标（最多 3 条）
-- 完成 Nextcloud/iCloud 等主流 CalDAV 服务端联调验证（AVO-008）。
+- 推进 AI 记忆与关键词学习能力（AVO-027）。
 - 增加后台访问安全机制与部署建议（AVO-009）。
 - 建立 CI 自动化质量门禁（AVO-010）。

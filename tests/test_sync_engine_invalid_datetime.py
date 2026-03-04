@@ -1,4 +1,5 @@
-﻿import tempfile
+﻿import json
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -185,6 +186,85 @@ class _ModelCaptureAIClient:
         _ModelCaptureAIClient.models.append(str(self.config.model))
         _ModelCaptureAIClient.service_tiers.append(str(getattr(self.config, "_request_service_tier", "")))
         return {"changes": []}
+
+
+class _MoveOutWindowAIClient:
+    calls = 0
+
+    def __init__(self, _config) -> None:
+        self.last_usage = {}
+
+    def is_configured(self) -> bool:
+        return True
+
+    def generate_changes(self, *, messages):
+        _ = messages
+        _MoveOutWindowAIClient.calls += 1
+        return {
+            "changes": [
+                {
+                    "calendar_id": "cal-user",
+                    "uid": "uid-1",
+                    "start": "2030-01-01T10:00:00+00:00",
+                    "end": "2030-01-01T11:00:00+00:00",
+                    "reason": "move out of current planning window",
+                }
+            ]
+        }
+
+
+class _SplitCreateAIClient:
+    calls = 0
+
+    def __init__(self, _config) -> None:
+        self.last_usage = {}
+
+    def is_configured(self) -> bool:
+        return True
+
+    def generate_changes(self, *, messages):
+        _SplitCreateAIClient.calls += 1
+        user_payload: dict[str, object] = {}
+        for msg in messages:
+            if str(msg.get("role", "")) != "user":
+                continue
+            try:
+                user_payload = json.loads(str(msg.get("content", "")))
+            except Exception:
+                user_payload = {}
+            break
+        target_uids = user_payload.get("target_uids", []) if isinstance(user_payload, dict) else []
+        target_uid = str((target_uids[0] if isinstance(target_uids, list) and target_uids else "") or "").strip()
+        events_by_uid = user_payload.get("events_by_uid", {}) if isinstance(user_payload, dict) else {}
+        event_payload = events_by_uid.get(target_uid, {}) if isinstance(events_by_uid, dict) else {}
+        event_range = event_payload.get("t", []) if isinstance(event_payload, dict) else []
+        if not target_uid or not isinstance(event_range, list) or len(event_range) < 2:
+            return {"changes": [], "creates": []}
+        source_start = datetime.fromisoformat(str(event_range[0]))
+        first_end = source_start + timedelta(minutes=30)
+        second_start = source_start + timedelta(hours=1)
+        second_end = source_start + timedelta(hours=2)
+        return {
+            "changes": [
+                {
+                    "uid": target_uid,
+                    "start": source_start.isoformat(),
+                    "end": first_end.isoformat(),
+                    "reason": "split part 1",
+                }
+            ],
+            "creates": [
+                {
+                    "from_uid": target_uid,
+                    "create_key": "split-2",
+                    "start": second_start.isoformat(),
+                    "end": second_end.isoformat(),
+                    "summary": "Task 1 (2/2)",
+                    "description": "Continuation block",
+                    "reason": "split part 2",
+                }
+            ],
+        }
 
 
 class SyncEngineInvalidDatetimeTests(unittest.TestCase):
@@ -720,6 +800,139 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             self.assertEqual(_CountingAIClient.calls, 1)
             audit_events = store.recent_audit_events(limit=200)
             self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
+
+    def test_ai_moved_event_outside_window_still_writes_back(self) -> None:
+        class _WindowFilteringCalDAVService(_FakeCalDAVService):
+            def fetch_events(self, calendar_id: str, start: datetime, end: datetime) -> list[EventRecord]:
+                items = []
+                for event in self._events.get(calendar_id, {}).values():
+                    if event.start is None or event.end is None:
+                        continue
+                    if event.end <= start or event.start >= end:
+                        continue
+                    items.append(event.clone())
+                return items
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                    },
+                    "sync": {
+                        "window_days": 1,
+                        "interval_seconds": 300,
+                        "timezone": "UTC",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _MoveOutWindowAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _WindowFilteringCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _MoveOutWindowAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_MoveOutWindowAIClient.calls, 1)
+            mappings = store.list_event_mappings()
+            uid1_mapping = next(item for item in mappings if str(item.get("source_uid")) == "uid-1")
+            user_uid = str(uid1_mapping.get("user_uid", ""))
+            stack_uid = str(uid1_mapping.get("stack_uid", ""))
+            audit_events = store.recent_audit_events(limit=300)
+            apply_events = [item for item in audit_events if item["action"] == "apply_ai_change"]
+            self.assertTrue(apply_events)
+            after_event = apply_events[-1]["details"].get("after_event", {})
+            self.assertIn(str(after_event.get("uid", "")), {stack_uid, user_uid, "uid-1"})
+            self.assertEqual(str(after_event.get("start")), "2030-01-01T10:00:00+00:00")
+
+    def test_ai_creates_are_idempotent_with_deterministic_source_uid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            fake_service = _FakeCalDAVService(object())
+            _SplitCreateAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", return_value=fake_service),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _SplitCreateAIClient),
+            ):
+                first = engine.run_once(trigger="manual")
+                self.assertEqual(first.status, "success")
+                source_mapping = next(
+                    item for item in store.list_event_mappings() if str(item.get("source_uid", "")) == "uid-1"
+                )
+                source_user_uid = str(source_mapping.get("user_uid", ""))
+                for uid, event in fake_service._events[fake_service.user_id].items():
+                    if uid == source_user_uid:
+                        event.description = "[AI Task]\nlocked: false\nuser_intent: split again\n[/AI Task]"
+                    else:
+                        event.description = "[AI Task]\nlocked: false\nuser_intent: ''\n[/AI Task]"
+                store.set_meta("last_applied_ai_hash", "force-replan")
+                second = engine.run_once(trigger="manual")
+                self.assertEqual(second.status, "success")
+
+            self.assertGreaterEqual(_SplitCreateAIClient.calls, 2)
+            mappings = store.list_event_mappings()
+            ai_mappings = [item for item in mappings if str(item.get("source", "")) == "ai"]
+            self.assertEqual(len(ai_mappings), 1)
+            ai_mapping = ai_mappings[0]
+            stack_uid = str(ai_mapping.get("stack_uid", ""))
+            user_uid = str(ai_mapping.get("user_uid", ""))
+            self.assertIn(stack_uid, fake_service._events[fake_service.stack_id])
+            self.assertIn(user_uid, fake_service._events[fake_service.user_id])
+            stack_split_events = [
+                event for event in fake_service._events[fake_service.stack_id].values() if event.summary == "Task 1 (2/2)"
+            ]
+            user_split_events = [
+                event for event in fake_service._events[fake_service.user_id].values() if event.summary == "Task 1 (2/2)"
+            ]
+            self.assertEqual(len(stack_split_events), 1)
+            self.assertEqual(len(user_split_events), 1)
 
 
 if __name__ == "__main__":

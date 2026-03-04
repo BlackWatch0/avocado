@@ -153,6 +153,13 @@ Admin page behavior:
 - optional AI payload test logging:
   - set `ai.payload_logging_enabled: true`
   - payload I/O saved to `ai.payload_log_path` (default `data/test_logs/ai_payload_exchange.jsonl`)
+- AI planning payload uses compact schema (`events_by_uid` + `target_uids`) to reduce token usage:
+  - each event keeps only `t/s/l/d/k/i` minimal fields
+  - internal fields (`x-*`, `etag`, `href`, `source`, `original_*`) are not sent to AI
+- AI now supports both update and create planning results:
+  - `changes` can be `uid`-only (calendar ID is rebuilt by mapping)
+  - `creates` supports split/new sessions; created events are written to `stack` then mirrored to `user`
+  - split convention: original event becomes part 1 in `changes`, remaining parts go to `creates`
 
 ## Test
 

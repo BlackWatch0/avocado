@@ -1,15 +1,16 @@
 ﻿from __future__ import annotations
 
 import json
+import hashlib
 import re
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from avocado.ai_client import OpenAICompatibleClient
-from avocado.core.models import EventRecord, SyncResult, serialize_datetime
+from avocado.core.models import EventRecord, SyncResult, parse_iso_datetime, serialize_datetime
 from avocado.integrations.caldav import CalDAVService
-from avocado.planner import build_messages, build_planning_payload, normalize_changes
+from avocado.planner import build_messages, build_planning_payload, normalize_ai_plan_result
 from avocado.reconciler import apply_change
 from avocado.sync.helpers_identity import _event_fingerprint, _hash_text
 from avocado.sync.helpers_intent import (
@@ -461,7 +462,9 @@ class PipelineMixin:
 
             freeze_cutoff = datetime.now(timezone.utc) + timedelta(hours=max(0, int(config.sync.freeze_hours)))
             planning_events: list[EventRecord] = []
-            target_events_payload: list[dict[str, Any]] = []
+            target_uids: list[str] = []
+            target_uid_set: set[str] = set()
+            target_intents_by_uid: dict[str, str] = {}
             hash_items: list[dict[str, Any]] = []
             stack_uid_to_sync_id: dict[str, str] = {}
             seen_stage_uids: set[str] = set()
@@ -514,22 +517,19 @@ class PipelineMixin:
                         target_intent = _extract_user_intent(event)
                     else:
                         target_intent = "Arrange this newly imported event into the schedule."
-                    target_events_payload.append(
-                        {
-                            "calendar_id": event.calendar_id,
-                            "uid": event.uid,
-                            "user_intent": target_intent,
-                            "editable_fields": _extract_editable_fields(event, list(config.task_defaults.editable_fields)),
-                        }
-                    )
+                    if event.uid and event.uid not in target_uid_set:
+                        target_uid_set.add(event.uid)
+                        target_uids.append(event.uid)
+                    if event.uid:
+                        target_intents_by_uid[event.uid] = target_intent
 
             ai_input_hash = _hash_text(json.dumps(hash_items, ensure_ascii=False, sort_keys=True))
             last_ai_hash = self.state_store.get_meta("last_applied_ai_hash")
             force_ai_due_to_new_inbox = inbox_pending_count > 0
-            raw_changes: list[dict[str, Any]] = []
-            payload_calendar_to_real: dict[str, str] = {}
+            raw_ai_result: dict[str, Any] = {"changes": [], "creates": []}
+            payload_char_count = 0
 
-            if config.ai.enabled and target_events_payload and (
+            if config.ai.enabled and target_uids and (
                 ai_input_hash != last_ai_hash or force_ai_due_to_new_inbox
             ):
                 ai_client = OpenAICompatibleClient(config.ai)
@@ -551,20 +551,23 @@ class PipelineMixin:
                     if high_load_model and high_load_active:
                         selected_model = high_load_model
                     use_flex_tier = bool(getattr(config.ai, "high_load_use_flex", False)) and high_load_active
-                    payload_calendar_to_real = {"stack": stack_info.calendar_id}
-                    real_to_payload_calendar = {v: k for k, v in payload_calendar_to_real.items()}
                     payload_events: list[dict[str, Any]] = []
                     for event in planning_events:
-                        payload_event = event.with_updates(
-                            calendar_id=real_to_payload_calendar.get(event.calendar_id, event.calendar_id)
-                        ).to_dict()
-                        visible_description, ai_task, x_task_meta = ai_task_payload_from_description(
+                        visible_description, ai_task, _ = ai_task_payload_from_description(
                             event.description or "",
                             config.task_defaults,
                         )
-                        payload_event["description"] = visible_description
-                        payload_event["ai_task"] = ai_task
-                        payload_event.update(x_task_meta)
+                        payload_event: dict[str, Any] = {
+                            "uid": event.uid,
+                            "start": serialize_datetime(event.start) or "",
+                            "end": serialize_datetime(event.end) or "",
+                            "summary": str(event.summary or ""),
+                            "location": str(event.location or ""),
+                            "description": visible_description,
+                            "locked": bool(ai_task.get("locked", event.locked)),
+                        }
+                        if event.uid in target_uid_set:
+                            payload_event["user_intent"] = target_intents_by_uid.get(event.uid, "")
                         payload_events.append(payload_event)
                     payload = build_planning_payload(
                         events=None,
@@ -572,8 +575,10 @@ class PipelineMixin:
                         window_start=serialize_datetime(window_start) or "",
                         window_end=serialize_datetime(window_end) or "",
                         timezone=effective_timezone,
-                        target_events=None,
+                        target_uids=target_uids,
+                        compact=True,
                     )
+                    payload_char_count = len(json.dumps(payload, ensure_ascii=False))
                     messages = build_messages(payload, system_prompt=config.ai.system_prompt)
                     request_payload = {
                         "model": selected_model,
@@ -591,18 +596,12 @@ class PipelineMixin:
                         client_config.model = selected_model
                         client_config._request_service_tier = "flex" if use_flex_tier else ""
                         try:
-                            raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
+                            raw_ai_result = ai_client.generate_changes(messages=messages) or {"changes": [], "creates": []}
                         finally:
                             client_config.model = original_model
                             client_config._request_service_tier = original_service_tier
                     else:
-                        raw_changes = (ai_client.generate_changes(messages=messages) or {}).get("changes", [])
-                    for change in raw_changes:
-                        if not isinstance(change, dict):
-                            continue
-                        payload_calendar_id = str(change.get("calendar_id", "")).strip()
-                        if payload_calendar_id in payload_calendar_to_real:
-                            change["calendar_id"] = payload_calendar_to_real[payload_calendar_id]
+                        raw_ai_result = ai_client.generate_changes(messages=messages) or {"changes": [], "creates": []}
                     usage = dict(getattr(ai_client, "last_usage", {}) or {})
                     _audit(
                         calendar_id="system",
@@ -613,8 +612,12 @@ class PipelineMixin:
                             "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
                             "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
                             "total_tokens": int(usage.get("total_tokens", 0) or 0),
-                            "target_events_count": len(target_events_payload),
+                            "target_events_count": len(target_uids),
+                            "target_uids_count": len(target_uids),
                             "planning_events_count": len(planning_events),
+                            "events_sent_count": len(payload.get("events_by_uid", {})),
+                            "payload_char_count": int(payload_char_count),
+                            "payload_version": "compact_v1",
                             "inbox_pending_count": int(inbox_pending_count),
                             "forced_by_new_inbox": bool(force_ai_due_to_new_inbox),
                             "ai_input_hash": ai_input_hash,
@@ -659,7 +662,11 @@ class PipelineMixin:
             else:
                 _audit(calendar_id="system", uid="ai", action="skip_ai_no_targets", details={})
 
-            normalized_changes = normalize_changes(raw_changes)
+            normalized_plan = normalize_ai_plan_result(raw_ai_result)
+            normalized_changes = normalized_plan.get("changes", [])
+            normalized_creates = normalized_plan.get("creates", [])
+            ai_changed_sync_ids: set[str] = set()
+            ai_created_sync_ids: set[str] = set()
             for change in normalized_changes:
                 uid = str(change.get("uid", "")).strip()
                 if not uid:
@@ -757,6 +764,7 @@ class PipelineMixin:
                 )
                 updated.description = updated_description
                 stack_state[sync_id] = updated
+                ai_changed_sync_ids.add(sync_id)
                 _audit(
                     calendar_id=current_event.calendar_id,
                     uid=current_event.uid,
@@ -767,6 +775,174 @@ class PipelineMixin:
                         "patch": patch_items,
                         "before_event": current_event.to_dict(),
                         "after_event": updated.to_dict(),
+                    },
+                )
+
+            max_creates_per_run = 20
+            max_split_segments = 3
+            max_create_segments_per_parent = max(0, max_split_segments - 1)
+            creates_by_parent: dict[str, int] = {}
+            creates_to_apply = normalized_creates[:max_creates_per_run]
+            if len(normalized_creates) > max_creates_per_run:
+                _audit(
+                    calendar_id="system",
+                    uid="ai",
+                    action="ai_create_truncated",
+                    details={
+                        "reason": "max_creates_per_run",
+                        "received_count": len(normalized_creates),
+                        "accepted_count": len(creates_to_apply),
+                        "max_creates_per_run": max_creates_per_run,
+                    },
+                )
+            for create in creates_to_apply:
+                from_uid = str(create.get("from_uid", "") or "").strip()
+                if not from_uid:
+                    continue
+                parent_sync_id = stack_uid_to_sync_id.get(from_uid)
+                if parent_sync_id is None:
+                    user_mapping = mapping_by_user_uid.get(from_uid)
+                    if user_mapping is not None:
+                        parent_sync_id = str(user_mapping.get("sync_id", ""))
+                if not parent_sync_id or parent_sync_id in deleted_sync_ids:
+                    _audit(
+                        calendar_id="system",
+                        uid="ai",
+                        action="ai_create_invalid_parent",
+                        details={"from_uid": from_uid, "reason": "parent_not_found"},
+                    )
+                    continue
+                parent_event = stack_state.get(parent_sync_id)
+                if parent_event is None:
+                    _audit(
+                        calendar_id="system",
+                        uid="ai",
+                        action="ai_create_invalid_parent",
+                        details={"from_uid": from_uid, "reason": "parent_event_missing"},
+                    )
+                    continue
+                if _event_locked_for_ai(parent_event):
+                    _audit(
+                        calendar_id=parent_event.calendar_id,
+                        uid=parent_event.uid,
+                        action="ai_create_invalid_parent",
+                        details={"from_uid": from_uid, "reason": "parent_locked"},
+                    )
+                    continue
+                current_parent_create_count = int(creates_by_parent.get(from_uid, 0) or 0)
+                if current_parent_create_count >= max_create_segments_per_parent:
+                    _audit(
+                        calendar_id="system",
+                        uid="ai",
+                        action="ai_create_truncated",
+                        details={
+                            "from_uid": from_uid,
+                            "reason": "max_split_segments",
+                            "max_split_segments": max_split_segments,
+                        },
+                    )
+                    continue
+                try:
+                    created_start = parse_iso_datetime(create.get("start"))
+                    created_end = parse_iso_datetime(create.get("end"))
+                except Exception:
+                    created_start = None
+                    created_end = None
+                if created_start is None or created_end is None or created_end <= created_start:
+                    _audit(
+                        calendar_id="system",
+                        uid="ai",
+                        action="ai_create_invalid_datetime",
+                        details={
+                            "from_uid": from_uid,
+                            "start": create.get("start"),
+                            "end": create.get("end"),
+                        },
+                    )
+                    continue
+                create_key = str(create.get("create_key", "") or "").strip() or f"part-{current_parent_create_count + 2}"
+                summary = str(create.get("summary", "") or parent_event.summary or "").strip()
+                location = str(create.get("location", "") or "").strip()
+                description = str(create.get("description", "") or "").strip()
+                source_uid_seed = "|".join(
+                    [
+                        create_key,
+                        from_uid,
+                        serialize_datetime(created_start) or "",
+                        serialize_datetime(created_end) or "",
+                        summary,
+                    ]
+                )
+                source_uid = "ai-" + hashlib.sha1(source_uid_seed.encode("utf-8")).hexdigest()
+                mapping = self._ensure_mapping(
+                    source="ai",
+                    source_calendar_id=stack_info.calendar_id,
+                    source_uid=source_uid,
+                    preferred_user_uid="",
+                    preferred_stack_uid="",
+                    by_sync=mapping_by_sync,
+                    by_source=mapping_by_source,
+                    by_user_uid=mapping_by_user_uid,
+                    by_stack_uid=mapping_by_stack_uid,
+                )
+                if str(mapping.get("status", "active")) != "active":
+                    mapping["status"] = "active"
+                    self.state_store.upsert_event_mapping(**mapping)
+                    self._index_mapping(
+                        mapping,
+                        by_sync=mapping_by_sync,
+                        by_source=mapping_by_source,
+                        by_user_uid=mapping_by_user_uid,
+                        by_stack_uid=mapping_by_stack_uid,
+                    )
+                sync_id = str(mapping["sync_id"])
+                deleted_sync_ids.discard(sync_id)
+
+                created_event = EventRecord(
+                    calendar_id=stack_info.calendar_id,
+                    uid=str(mapping["stack_uid"]),
+                    summary=summary,
+                    description=description,
+                    location=location,
+                    start=created_start,
+                    end=created_end,
+                    source="stack",
+                    x_sync_id=sync_id,
+                    x_source="ai",
+                    x_source_uid=source_uid,
+                    locked=False,
+                    original_calendar_id=stack_info.calendar_id,
+                    original_uid=source_uid,
+                )
+                normalized_description, _, _ = ensure_ai_task_block(
+                    created_event.description or "",
+                    config.task_defaults,
+                )
+                normalized_description, _, _ = set_ai_task_locked(
+                    normalized_description,
+                    config.task_defaults,
+                    False,
+                )
+                normalized_description, _, _ = set_ai_task_user_intent(
+                    normalized_description,
+                    config.task_defaults,
+                    "",
+                )
+                created_event.description = normalized_description
+
+                stack_state[sync_id] = created_event
+                stack_uid_to_sync_id[created_event.uid] = sync_id
+                ai_created_sync_ids.add(sync_id)
+                creates_by_parent[from_uid] = current_parent_create_count + 1
+                _audit(
+                    calendar_id=created_event.calendar_id,
+                    uid=created_event.uid,
+                    action="apply_ai_create",
+                    details={
+                        "from_uid": from_uid,
+                        "create_key": create_key,
+                        "reason": str(create.get("reason", "") or "").strip(),
+                        "event": created_event.to_dict(),
                     },
                 )
 
@@ -781,7 +957,9 @@ class PipelineMixin:
                 event = stack_state.get(sync_id)
                 if event is None:
                     continue
-                if not self._in_window(event, window_start, window_end):
+                in_window = self._in_window(event, window_start, window_end)
+                include_due_to_ai_change = sync_id in ai_changed_sync_ids or sync_id in ai_created_sync_ids
+                if not in_window and not include_due_to_ai_change:
                     continue
 
                 processed_sync_ids.add(sync_id)
