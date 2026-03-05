@@ -8,17 +8,26 @@ ai:
   base_url: "https://api.openai.com/v1"
   api_key: "sk-..."
   model: "gpt-4o-mini"
-  high_load_model: ""         # Optional fallback model for heavy sync windows
-  high_load_event_threshold: 0  # 0 disables; if planning events >= threshold, switch to high_load_model
-  high_load_auto_enabled: false  # If true, also auto-detect heavy sync windows by density/count/conflicts
-  high_load_auto_score_threshold: 0.65  # Auto heavy-load score threshold (0+)
-  high_load_auto_event_baseline: 12  # Event-count baseline used by auto heavy-load score
+  high_load_model: "gpt-5"         # Optional fallback model for heavy sync windows
+  high_load_event_threshold: 0  # Legacy manual switch threshold; 0 keeps auto routing only
+  high_load_auto_enabled: true  # Auto-detect heavy sync windows by density/count/conflicts
+  high_load_auto_score_threshold: 0.80  # Auto heavy-load score threshold (0+)
+  high_load_auto_event_baseline: 20  # Event-count baseline used by auto heavy-load score
+  high_load_min_event_count: 20  # Require at least this many events before switching to high_load_model
+  high_load_reasoning_effort: "low"  # low|medium|high|default (default means omit parameter)
   high_load_use_flex: false   # If true, heavy sync windows also send service_tier=flex
   high_load_flex_fallback_to_auto: true  # If Flex fails (timeout/resource unavailable), retry once with service_tier=auto
   timeout_seconds: 90
   payload_logging_enabled: false
   payload_log_path: "data/test_logs/ai_payload_exchange.jsonl"
   payload_log_max_chars: 200000
+  sparse_new_event_context_enabled: true  # Enable sparse context strategy
+  sparse_context_scope: "all_targets"  # new_only|all_targets
+  sparse_new_event_neighbor_count: 1  # Number of neighbor events (before/after) sent in full detail per target
+  sparse_new_event_max_context_requests: 3  # Max additional context windows accepted from AI for phase-2 call
+  payload_target_description_max_chars: 160  # Max chars for target descriptions in payload
+  payload_neighbor_description_max_chars: 80  # Max chars for non-target full-detail descriptions
+  payload_max_full_detail_events: 10  # Cap full-detail events per AI call; others are busy-only
   # system_prompt is stored separately in AVOCADO_PROMPT_PATH (default: ai_system_prompt.txt at project root)
   # [AI Task] template is stored separately in AVOCADO_AI_TASK_TEMPLATE_PATH
   # (default: ai_task_template.yaml at project root)

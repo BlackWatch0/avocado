@@ -10,11 +10,17 @@ class ModelsTests(unittest.TestCase):
         self.assertTrue(bool(cfg.system_prompt.strip()))
         self.assertEqual(cfg.high_load_model, "")
         self.assertEqual(cfg.high_load_event_threshold, 0)
-        self.assertFalse(cfg.high_load_auto_enabled)
-        self.assertEqual(cfg.high_load_auto_score_threshold, 0.65)
-        self.assertEqual(cfg.high_load_auto_event_baseline, 12)
+        self.assertTrue(cfg.high_load_auto_enabled)
+        self.assertEqual(cfg.high_load_auto_score_threshold, 0.8)
+        self.assertEqual(cfg.high_load_auto_event_baseline, 20)
+        self.assertEqual(cfg.high_load_min_event_count, 20)
+        self.assertEqual(cfg.high_load_reasoning_effort, "low")
         self.assertFalse(cfg.high_load_use_flex)
         self.assertTrue(cfg.high_load_flex_fallback_to_auto)
+        self.assertEqual(cfg.sparse_context_scope, "all_targets")
+        self.assertEqual(cfg.payload_target_description_max_chars, 160)
+        self.assertEqual(cfg.payload_neighbor_description_max_chars, 80)
+        self.assertEqual(cfg.payload_max_full_detail_events, 10)
 
     def test_ai_config_high_load_fields(self) -> None:
         cfg = AIConfig.from_dict(
@@ -38,13 +44,25 @@ class ModelsTests(unittest.TestCase):
                 "high_load_auto_enabled": True,
                 "high_load_auto_score_threshold": 0.72,
                 "high_load_auto_event_baseline": 9,
+                "high_load_min_event_count": 15,
+                "high_load_reasoning_effort": "medium",
                 "high_load_use_flex": True,
+                "sparse_context_scope": "new_only",
+                "payload_target_description_max_chars": 220,
+                "payload_neighbor_description_max_chars": 120,
+                "payload_max_full_detail_events": 18,
             }
         )
         self.assertTrue(cfg.high_load_auto_enabled)
         self.assertEqual(cfg.high_load_auto_score_threshold, 0.72)
         self.assertEqual(cfg.high_load_auto_event_baseline, 9)
+        self.assertEqual(cfg.high_load_min_event_count, 15)
+        self.assertEqual(cfg.high_load_reasoning_effort, "medium")
         self.assertTrue(cfg.high_load_use_flex)
+        self.assertEqual(cfg.sparse_context_scope, "new_only")
+        self.assertEqual(cfg.payload_target_description_max_chars, 220)
+        self.assertEqual(cfg.payload_neighbor_description_max_chars, 120)
+        self.assertEqual(cfg.payload_max_full_detail_events, 18)
 
     def test_ai_config_high_load_flex_fallback_flag(self) -> None:
         cfg = AIConfig.from_dict(

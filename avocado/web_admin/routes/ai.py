@@ -51,105 +51,171 @@ def register_ai_routes(app: FastAPI) -> None:
 
     @app.get("/api/ai/changes")
     def ai_changes(limit: int = 15) -> dict[str, Any]:
-        events = app.state.context.state_store.recent_audit_events(limit=max(100, limit * 6))
+        group_limit = max(1, int(limit))
+        events = app.state.context.state_store.recent_audit_events(limit=max(200, group_limit * 20))
         output: list[dict[str, Any]] = []
+        grouped_items: dict[str, dict[str, Any]] = {}
+        group_order: list[str] = []
         config = app.state.context.config_manager.load()
         service: CalDAVService | None = None
+        ai_requests_by_run: dict[int, dict[str, Any]] = {}
         for event in events:
-            if event.get("action") != "apply_ai_change":
+            if event.get("action") != "ai_request":
+                continue
+            run_id = event.get("run_id")
+            if isinstance(run_id, int):
+                ai_requests_by_run[run_id] = event
+
+        for event in events:
+            action = str(event.get("action", "") or "")
+            if action not in {"apply_ai_change", "apply_ai_create"}:
                 continue
             details = event.get("details", {}) or {}
+            effective_patch: list[dict[str, Any]] = []
+            item_type = "update"
             before_event = details.get("before_event") or {}
             after_event = details.get("after_event") or {}
             patch = details.get("patch") or []
-
-            start_value = after_event.get("start") or details.get("start") or before_event.get("start") or ""
-            end_value = after_event.get("end") or details.get("end") or before_event.get("end") or ""
-            summary_value = (
-                after_event.get("summary")
-                or details.get("title")
-                or before_event.get("summary")
-                or ""
-            )
-            if isinstance(patch, list):
-                for item in patch:
-                    if not isinstance(item, dict):
-                        continue
-                    field = str(item.get("field", "")).strip()
-                    after_value = item.get("after")
-                    if field == "summary" and not summary_value:
-                        summary_value = str(after_value or "")
-                    elif field == "start" and not start_value:
-                        start_value = str(after_value or "")
-                    elif field == "end" and not end_value:
-                        end_value = str(after_value or "")
-
             calendar_id = str(event.get("calendar_id", "") or "")
             uid = str(event.get("uid", "") or "")
-            if (not summary_value or not start_value or not end_value) and calendar_id and uid:
-                try:
-                    if service is None:
-                        service = CalDAVService(config.caldav)
-                    current_event = service.get_event_by_uid(calendar_id, uid)
-                    if current_event is not None:
-                        if not summary_value:
-                            summary_value = current_event.summary
-                        if not start_value:
-                            start_value = current_event.to_dict().get("start", "")
-                        if not end_value:
-                            end_value = current_event.to_dict().get("end", "")
-                except Exception:
-                    pass
+            start_value = ""
+            end_value = ""
+            summary_value = ""
+            reason_text = str(details.get("reason", "") or "").strip()
+            if action == "apply_ai_create":
+                item_type = "create"
+                created_event = details.get("event") if isinstance(details.get("event"), dict) else {}
+                calendar_id = str(created_event.get("calendar_id", "") or calendar_id or "")
+                uid = str(created_event.get("uid", "") or uid or "")
+                summary_value = str(created_event.get("summary", "") or "")
+                start_value = str(created_event.get("start", "") or "")
+                end_value = str(created_event.get("end", "") or "")
+                effective_patch = [
+                    {"field": "summary", "before": "-", "after": summary_value or "-"},
+                    {"field": "start", "before": "-", "after": start_value or "-"},
+                    {"field": "end", "before": "-", "after": end_value or "-"},
+                ]
+                if not reason_text:
+                    reason_text = "AI created new event"
+            else:
+                start_value = after_event.get("start") or details.get("start") or before_event.get("start") or ""
+                end_value = after_event.get("end") or details.get("end") or before_event.get("end") or ""
+                summary_value = (
+                    after_event.get("summary")
+                    or details.get("title")
+                    or before_event.get("summary")
+                    or ""
+                )
+                if isinstance(patch, list):
+                    for item in patch:
+                        if not isinstance(item, dict):
+                            continue
+                        field = str(item.get("field", "")).strip()
+                        after_value = item.get("after")
+                        if field == "summary" and not summary_value:
+                            summary_value = str(after_value or "")
+                        elif field == "start" and not start_value:
+                            start_value = str(after_value or "")
+                        elif field == "end" and not end_value:
+                            end_value = str(after_value or "")
+                if (not summary_value or not start_value or not end_value) and calendar_id and uid:
+                    try:
+                        if service is None:
+                            service = CalDAVService(config.caldav)
+                        current_event = service.get_event_by_uid(calendar_id, uid)
+                        if current_event is not None:
+                            if not summary_value:
+                                summary_value = current_event.summary
+                            if not start_value:
+                                start_value = current_event.to_dict().get("start", "")
+                            if not end_value:
+                                end_value = current_event.to_dict().get("end", "")
+                    except Exception:
+                        pass
 
-            title = str(
-                summary_value
-                or ""
-            ).strip()
+                if isinstance(patch, list):
+                    for item in patch:
+                        if not isinstance(item, dict):
+                            continue
+                        before_val = str(item.get("before", "") or "")
+                        after_val = str(item.get("after", "") or "")
+                        if before_val == after_val:
+                            continue
+                        effective_patch.append(
+                            {
+                                "field": str(item.get("field", "") or ""),
+                                "before": before_val,
+                                "after": after_val,
+                            }
+                        )
+                if not reason_text:
+                    fields = details.get("fields") or []
+                    if isinstance(fields, list) and fields:
+                        reason_text = f"AI adjusted fields: {', '.join(str(x) for x in fields)}"
+                    else:
+                        reason_text = "Legacy record without reason"
+                if not effective_patch:
+                    continue
+
+            title = str(summary_value or "").strip()
             if not title:
                 title = uid or f"event#{event.get('id')}"
-            reason_text = str(details.get("reason", "") or "").strip()
-            if not reason_text:
-                fields = details.get("fields") or []
-                if isinstance(fields, list) and fields:
-                    reason_text = f"AI adjusted fields: {', '.join(str(x) for x in fields)}"
-                else:
-                    reason_text = "Legacy record without reason"
-
-            effective_patch: list[dict[str, Any]] = []
-            if isinstance(patch, list):
-                for item in patch:
-                    if not isinstance(item, dict):
-                        continue
-                    before_val = str(item.get("before", "") or "")
-                    after_val = str(item.get("after", "") or "")
-                    if before_val == after_val:
-                        continue
-                    effective_patch.append(
-                        {
-                            "field": str(item.get("field", "") or ""),
-                            "before": before_val,
-                            "after": after_val,
-                        }
-                    )
-            if not effective_patch:
+            item_payload = {
+                "audit_id": event.get("id"),
+                "created_at": event.get("created_at"),
+                "calendar_id": calendar_id,
+                "uid": uid,
+                "title": title,
+                "start": start_value,
+                "end": end_value,
+                "reason": reason_text,
+                "fields": details.get("fields") or [],
+                "patch": effective_patch,
+                "item_type": item_type,
+                "can_undo": item_type == "update",
+                "can_revise": item_type == "update",
+            }
+            run_id = event.get("run_id")
+            group_key = str(run_id if isinstance(run_id, int) else f"event-{event.get('id')}")
+            if group_key not in grouped_items and len(group_order) >= group_limit:
                 continue
-            output.append(
-                {
-                    "audit_id": event.get("id"),
-                    "created_at": event.get("created_at"),
-                    "calendar_id": calendar_id,
-                    "uid": uid,
-                    "title": title,
-                    "start": start_value,
-                    "end": end_value,
-                    "reason": reason_text,
-                    "fields": details.get("fields") or [],
-                    "patch": effective_patch,
+            group = grouped_items.get(group_key)
+            if group is None:
+                request_event = ai_requests_by_run.get(run_id) if isinstance(run_id, int) else None
+                request_details = request_event.get("details", {}) if isinstance(request_event, dict) else {}
+                group = {
+                    "group_id": group_key,
+                    "run_id": run_id,
+                    "requested_at": (request_event or {}).get("created_at", "") if isinstance(request_event, dict) else "",
+                    "response_applied_at": event.get("created_at"),
+                    "model": str(request_details.get("model", "") or ""),
+                    "service_tier": str(request_details.get("service_tier", "") or ""),
+                    "items": [],
+                    "updated_count": 0,
+                    "created_count": 0,
                 }
-            )
-            if len(output) >= max(1, limit):
-                break
-        return {"changes": output}
+                grouped_items[group_key] = group
+                group_order.append(group_key)
+            group["items"].append(item_payload)
+            if item_type == "create":
+                group["created_count"] += 1
+            else:
+                group["updated_count"] += 1
+        for group_key in group_order:
+            group = grouped_items.get(group_key)
+            if not group:
+                continue
+            for item in group.get("items", []):
+                output.append(item)
+        groups = list(grouped_items.values())
+        groups.sort(
+            key=lambda item: (
+                str(item.get("response_applied_at", "") or ""),
+                str(item.get("requested_at", "") or ""),
+            ),
+            reverse=True,
+        )
+        return {"changes": output, "groups": groups}
 
     @app.post("/api/ai/changes/undo")
     def undo_ai_change(request: AIChangeUndoRequest) -> dict[str, Any]:

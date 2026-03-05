@@ -49,7 +49,8 @@ Avocado is a CalDAV-oriented AI scheduling service that can:
 2. Edit `config.yaml`:
    - `caldav.base_url`, `caldav.username`, `caldav.password`
    - `ai.base_url`, `ai.api_key`, `ai.model`
-   - optional heavy-load switch: `ai.high_load_model`, `ai.high_load_event_threshold`, `ai.high_load_auto_enabled`, `ai.high_load_auto_score_threshold`, `ai.high_load_auto_event_baseline`, `ai.high_load_use_flex`, `ai.high_load_flex_fallback_to_auto`
+   - optional heavy-load switch: `ai.high_load_model`, `ai.high_load_auto_enabled`, `ai.high_load_auto_score_threshold`, `ai.high_load_auto_event_baseline`, `ai.high_load_min_event_count`, `ai.high_load_reasoning_effort`, `ai.high_load_use_flex`, `ai.high_load_flex_fallback_to_auto` (`ai.high_load_event_threshold` kept as legacy/manual field)
+   - optional sparse context controls: `ai.sparse_new_event_context_enabled`, `ai.sparse_context_scope`, `ai.sparse_new_event_neighbor_count`, `ai.sparse_new_event_max_context_requests`, `ai.payload_target_description_max_chars`, `ai.payload_neighbor_description_max_chars`, `ai.payload_max_full_detail_events`
    - optional `sync.window_days`, `sync.interval_seconds`, `sync.timezone_source`, `sync.timezone`
    - AI system prompt is stored separately at `ai_system_prompt.txt` (managed in admin page)
 
@@ -135,8 +136,8 @@ Admin page behavior:
 - AI Base URL defaults to `https://api.openai.com/v1`
 - API connectivity test is available as a blue inline link directly below AI Base URL
 - after connectivity test, available models are loaded into Model dropdown
-- optional: configure a High-Load Model + event threshold; when planning event count reaches threshold, sync switches to that model for this run
-- optional: enable automatic heavy-load detection by schedule density + event count + overlap conflicts; when computed score reaches threshold, sync also switches to high-load model
+- optional: configure a High-Load Model; sync switches to it only when automatic heavy-load score reaches threshold and event count is also above `high_load_min_event_count`
+- optional: high-load model can set `reasoning_effort` (`low|medium|high|default`); default recommendation is `low` for token control
 - optional: enable `Use Flex Tier Above Threshold` to send `service_tier=flex` on heavy sync windows
 - when Flex is enabled, client uses longer timeout (at least 10 minutes), retries resource-unavailable/timeouts with backoff, and can fallback to `service_tier=auto`
 - managed calendar recovery: if configured managed calendar ID is missing and no same-name calendar exists, sync auto-creates one; if multiple same-name calendars exist, sync refuses and asks for manual cleanup
@@ -147,6 +148,8 @@ Admin page behavior:
   - manual override available from the language selector in header
 - `[AI Task]` block is simplified and now includes only: `locked`, `user_intent`
 - admin page includes run-log query panels (sync runs + audit events)
+- AI change panel now groups entries by each accepted AI response (run) for easier reading
+- grouped AI entries include both updated events and newly created events
 - logs page includes an AI token-usage line chart (derived from audit action `ai_request`)
 - AI token-usage chart auto refreshes every 30s and supports custom retention days (default 90)
 - admin page supports one-click custom time-range sync (start/end datetime)
@@ -154,7 +157,10 @@ Admin page behavior:
   - set `ai.payload_logging_enabled: true`
   - payload I/O saved to `ai.payload_log_path` (default `data/test_logs/ai_payload_exchange.jsonl`)
 - AI planning payload uses compact schema (`events_by_uid` + `target_uids`) to reduce token usage:
-  - each event keeps only `t/s/l/d/k/i` minimal fields
+  - supports two-phase sparse planning for target events (scope configurable via `ai.sparse_context_scope`):
+    - phase1: target + neighbor events in full detail (bounded by `payload_max_full_detail_events`); other events are occupancy-only (`time_range/summary/all_day/locked`)
+    - phase2: only when AI returns `context_requests`, service refetches requested date ranges in full detail and performs a second AI call
+  - payload carries `planning_phase` and per-event `detail_level` (`full|busy`) for clear context boundaries
   - internal fields (`x-*`, `etag`, `href`, `source`, `original_*`) are not sent to AI
 - AI now supports both update and create planning results:
   - `changes` can be `uid`-only (calendar ID is rebuilt by mapping)

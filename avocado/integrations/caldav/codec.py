@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from icalendar import Calendar as ICalendar
@@ -70,10 +70,17 @@ def parse_resource(calendar_id: str, resource: Any) -> EventRecord:
     description = str(vevent.get("DESCRIPTION", "")).strip()
     location = str(vevent.get("LOCATION", "")).strip()
     dtstart_raw = vevent.decoded("DTSTART") if vevent.get("DTSTART") is not None else None
-    start = coerce_datetime(dtstart_raw, is_end=False)
-    dtend_raw = vevent.decoded("DTEND") if vevent.get("DTEND") is not None else None
-    end = coerce_datetime(dtend_raw, is_end=True)
     all_day = isinstance(dtstart_raw, date) and not isinstance(dtstart_raw, datetime)
+    dtend_raw = vevent.decoded("DTEND") if vevent.get("DTEND") is not None else None
+    if all_day:
+        start = datetime.combine(dtstart_raw, time.min, tzinfo=timezone.utc)
+        if isinstance(dtend_raw, date) and not isinstance(dtend_raw, datetime):
+            end = datetime.combine(dtend_raw, time.min, tzinfo=timezone.utc)
+        else:
+            end = start + timedelta(days=1)
+    else:
+        start = coerce_datetime(dtstart_raw, is_end=False)
+        end = coerce_datetime(dtend_raw, is_end=True)
     if start and end is None:
         end = start + timedelta(hours=1)
     href = str(getattr(resource, "url", "") or "")
@@ -115,8 +122,21 @@ def build_ical(event: EventRecord) -> str:
     if event.x_source_uid:
         vevent.add(X_AVO_SOURCE_UID, event.x_source_uid)
     if event.start is not None:
-        vevent.add("DTSTART", event.start)
-    if event.end is not None:
-        vevent.add("DTEND", event.end)
+        if event.all_day:
+            start_date = event.start.date()
+            vevent.add("DTSTART", start_date)
+            if event.end is not None:
+                end_dt = event.end
+                if end_dt.time() != time.min:
+                    end_dt = datetime.combine((end_dt + timedelta(days=1)).date(), time.min, tzinfo=timezone.utc)
+                if end_dt <= event.start:
+                    end_dt = datetime.combine((event.start + timedelta(days=1)).date(), time.min, tzinfo=timezone.utc)
+                vevent.add("DTEND", end_dt.date())
+            else:
+                vevent.add("DTEND", (event.start + timedelta(days=1)).date())
+        else:
+            vevent.add("DTSTART", event.start)
+            if event.end is not None:
+                vevent.add("DTEND", event.end)
     calendar_obj.add_component(vevent)
     return calendar_obj.to_ical().decode("utf-8")

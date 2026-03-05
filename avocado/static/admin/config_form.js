@@ -16,10 +16,22 @@
   document.getElementById("ai-high-load-model").value = cfg.ai?.high_load_model || "";
   document.getElementById("ai-high-load-event-threshold").value =
     cfg.ai?.high_load_event_threshold ?? 0;
+  document.getElementById("ai-high-load-min-event-count").value =
+    cfg.ai?.high_load_min_event_count ?? 20;
+  document.getElementById("ai-high-load-reasoning-effort").value =
+    cfg.ai?.high_load_reasoning_effort || "low";
   const highLoadAutoEnabledEl = document.getElementById("ai-high-load-auto-enabled");
   if (highLoadAutoEnabledEl) {
-    highLoadAutoEnabledEl.checked = !!cfg.ai?.high_load_auto_enabled;
+    highLoadAutoEnabledEl.checked = cfg.ai?.high_load_auto_enabled !== false;
   }
+  document.getElementById("ai-sparse-context-scope").value =
+    cfg.ai?.sparse_context_scope || "all_targets";
+  document.getElementById("ai-payload-target-description-max-chars").value =
+    cfg.ai?.payload_target_description_max_chars ?? 160;
+  document.getElementById("ai-payload-neighbor-description-max-chars").value =
+    cfg.ai?.payload_neighbor_description_max_chars ?? 80;
+  document.getElementById("ai-payload-max-full-detail-events").value =
+    cfg.ai?.payload_max_full_detail_events ?? 10;
   document.getElementById("ai-high-load-use-flex").checked = !!cfg.ai?.high_load_use_flex;
   document.getElementById("ai-high-load-flex-fallback-auto").checked =
     cfg.ai?.high_load_flex_fallback_to_auto !== false;
@@ -71,11 +83,28 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
   const highLoadEventThreshold = Number(
     document.getElementById("ai-high-load-event-threshold").value || "0"
   );
+  const highLoadMinEventCount = Number(
+    document.getElementById("ai-high-load-min-event-count").value || "0"
+  );
+  const payloadTargetDescriptionMaxChars = Number(
+    document.getElementById("ai-payload-target-description-max-chars").value || "0"
+  );
+  const payloadNeighborDescriptionMaxChars = Number(
+    document.getElementById("ai-payload-neighbor-description-max-chars").value || "0"
+  );
+  const payloadMaxFullDetailEvents = Number(
+    document.getElementById("ai-payload-max-full-detail-events").value || "0"
+  );
+  const sparseContextScope = document.getElementById("ai-sparse-context-scope").value || "all_targets";
   if (windowDays < 1) throw new Error(t("error.window_days"));
   if (intervalSeconds < 30) throw new Error(t("error.interval_seconds"));
   if (freezeHours < 0) throw new Error(t("error.freeze_hours"));
   if (timeoutSeconds < 1) throw new Error(t("error.timeout_seconds"));
   if (highLoadEventThreshold < 0) throw new Error(t("error.high_load_event_threshold"));
+  if (highLoadMinEventCount < 1) throw new Error(t("error.high_load_min_event_count"));
+  if (payloadTargetDescriptionMaxChars < 1) throw new Error(t("error.payload_target_description_max_chars"));
+  if (payloadNeighborDescriptionMaxChars < 1) throw new Error(t("error.payload_neighbor_description_max_chars"));
+  if (payloadMaxFullDetailEvents < 1) throw new Error(t("error.payload_max_full_detail_events"));
 
   return {
     caldav: {
@@ -90,7 +119,13 @@ export const readPayload = ({ t, splitByComma, readLockedSourceCalendarIds }) =>
       model: document.getElementById("ai-model").value.trim(),
       high_load_model: document.getElementById("ai-high-load-model").value.trim(),
       high_load_event_threshold: highLoadEventThreshold,
+      high_load_min_event_count: highLoadMinEventCount,
+      high_load_reasoning_effort: document.getElementById("ai-high-load-reasoning-effort").value.trim() || "low",
       high_load_auto_enabled: !!document.getElementById("ai-high-load-auto-enabled")?.checked,
+      sparse_context_scope: sparseContextScope,
+      payload_target_description_max_chars: payloadTargetDescriptionMaxChars,
+      payload_neighbor_description_max_chars: payloadNeighborDescriptionMaxChars,
+      payload_max_full_detail_events: payloadMaxFullDetailEvents,
       high_load_use_flex: document.getElementById("ai-high-load-use-flex").checked,
       high_load_flex_fallback_to_auto: document.getElementById("ai-high-load-flex-fallback-auto").checked,
       timeout_seconds: timeoutSeconds,

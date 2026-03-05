@@ -287,9 +287,78 @@ class WebAdminTests(unittest.TestCase):
         )
         resp = self.client.get("/api/ai/changes?limit=10")
         self.assertEqual(resp.status_code, 200)
-        items = resp.json()["changes"]
+        payload = resp.json()
+        items = payload["changes"]
         self.assertTrue(len(items) >= 1)
         self.assertEqual(items[0]["uid"], "uid-1")
+        self.assertIn("groups", payload)
+        self.assertTrue(len(payload["groups"]) >= 1)
+
+    def test_ai_changes_groups_include_creates(self) -> None:
+        run_id = self.client.app.state.context.state_store.start_sync_run(trigger="manual", message="running")
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="system",
+            uid="ai",
+            action="ai_request",
+            details={"model": "gpt-5", "service_tier": "flex"},
+            run_id=run_id,
+        )
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="user-id",
+            uid="uid-updated",
+            action="apply_ai_change",
+            details={
+                "reason": "move earlier",
+                "patch": [{"field": "start", "before": "2026-03-05T10:00:00+00:00", "after": "2026-03-05T09:00:00+00:00"}],
+                "before_event": {"calendar_id": "user-id", "uid": "uid-updated", "summary": "A"},
+                "after_event": {
+                    "calendar_id": "user-id",
+                    "uid": "uid-updated",
+                    "summary": "A",
+                    "start": "2026-03-05T09:00:00+00:00",
+                    "end": "2026-03-05T10:00:00+00:00",
+                },
+            },
+            run_id=run_id,
+        )
+        self.client.app.state.context.state_store.record_audit_event(
+            calendar_id="stack-id",
+            uid="uid-created",
+            action="apply_ai_create",
+            details={
+                "reason": "split tail",
+                "event": {
+                    "calendar_id": "stack-id",
+                    "uid": "uid-created",
+                    "summary": "Split (2/2)",
+                    "start": "2026-03-06T09:00:00+00:00",
+                    "end": "2026-03-06T10:00:00+00:00",
+                },
+            },
+            run_id=run_id,
+        )
+        self.client.app.state.context.state_store.finish_sync_run(
+            run_id=run_id,
+            status="success",
+            message="done",
+            duration_ms=10,
+            changes_applied=2,
+            conflicts=0,
+        )
+        resp = self.client.get("/api/ai/changes?limit=20")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        groups = payload.get("groups", [])
+        self.assertTrue(groups)
+        group = groups[0]
+        self.assertEqual(group.get("run_id"), run_id)
+        self.assertEqual(group.get("model"), "gpt-5")
+        self.assertEqual(group.get("service_tier"), "flex")
+        self.assertEqual(int(group.get("updated_count", 0)), 1)
+        self.assertEqual(int(group.get("created_count", 0)), 1)
+        item_types = {str(item.get("item_type", "")) for item in group.get("items", [])}
+        self.assertIn("update", item_types)
+        self.assertIn("create", item_types)
 
     def test_ai_changes_reason_fallback_from_fields(self) -> None:
         self.client.app.state.context.state_store.record_audit_event(

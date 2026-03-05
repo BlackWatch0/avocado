@@ -1,6 +1,6 @@
 ﻿# Avocado Project Log
 
-最后更新: 2026-03-04
+最后更新: 2026-03-05
 
 ## 文档说明（固定模板）
 - 记录格式模板（改动历史）: `YYYY-MM-DD | 变更主题 | 文件 | 行为变化 | 风险/回滚 | TODO`
@@ -39,7 +39,10 @@
 - 管理页面支持中英文双语；默认按浏览器语言自动选择，用户可手动切换并持久化偏好。
 - AI 改动仅作用于 `user_intent` 非空的事件；无意图事件即使 AI 返回变更也会被跳过并记录审计。
 - AI 规划请求仅把 `user_intent` 非空且未锁定事件作为 `target_uids`；其余事件仅作为上下文约束，避免误改与 token 浪费。
-- AI 规划 payload 使用紧凑结构 `events_by_uid`（最小字段 `t/s/l/d/k/i`），默认不发送 `x-* / etag / href / source / original_*` 等冗余字段。
+- AI 规划 payload 使用紧凑结构 `events_by_uid`（最小字段 `time_range/summary/location/description/locked/user_intent`），默认不发送 `x-* / etag / href / source / original_*` 等冗余字段。
+- 当目标含新导入/新建日程时，AI 规划默认使用“两阶段稀疏上下文”：第一轮仅发送目标+邻近事件详情，其余事件仅发送占用摘要；若 AI 返回 `context_requests`，第二轮补充指定日期/时间段的完整上下文后再输出最终改动。
+- AI 发送给模型的 `description` 为纯用户可见文本；`[AI Task]...[/AI Task]` 必须在本地解析并剥离后再入 payload，避免模型误改内部标记块。
+- 全天事件需在 CalDAV 读写链路保持 `VALUE=DATE` 语义，禁止降级为短时段事件。
 - AI 返回支持 `changes + creates`：`changes` 可仅依赖 `uid`；`creates` 用于新建/拆分事件（原事件为第 1 段，后续段走 `creates`）。
 - 定时同步（`trigger=scheduled`）在 planning payload 未变化时跳过 AI 请求，并记录 `skip_ai_same_payload` 审计，避免重复消耗 token。
 - 配置文件为 `config.yaml`，关键字段:
@@ -64,6 +67,18 @@
 ## 改动历史（按功能/任务，最新在上）
 | 日期 | 变更主题 | 涉及文件 | 行为变化 | 风险与回滚点 | 关联 TODO |
 | --- | --- | --- | --- | --- | --- |
+| 2026-03-05 | AVO-098：AI Token 降耗（平衡档，全场景稀疏上下文） | `avocado/sync/pipeline.py`, `avocado/planner.py`, `avocado/ai_client.py`, `avocado/core/models/config.py`, `config{,.example}.yaml`, `avocado/templates/admin.html`, `avocado/static/admin/{config_form.js,i18n.js}`, `ai_system_prompt.txt`, `tests/test_{models,planner,ai_request_audit,ai_client_payload_logging,sync_engine_invalid_datetime}.py` | 新增降耗配置（`sparse_context_scope`、双描述预算、full-detail 上限、`high_load_min_event_count`、`high_load_reasoning_effort`）；稀疏上下文从“仅新导入”扩展到可配置全场景；高负载模型切换收敛为“自动评分+最小事件数”双条件；`gpt-5*` 请求不再主动发送 `temperature`，高负载可带 `reasoning_effort=low` 且在 400 不支持时自动去参重试；`ai_request` 审计新增模型路由与上下文密度指标。 | 风险中等；若规划质量下降可先提高 `payload_max_full_detail_events` / 描述预算，或将 `sparse_context_scope` 回退到 `new_only`。 | AVO-098 |
+| 2026-03-05 | AVO-097：禁止 AI 修改过期日程 + payload 注入 current_time | `avocado/sync/pipeline.py`, `avocado/planner.py`, `ai_system_prompt.txt`, `tests/test_{planner,sync_engine_invalid_datetime}.py` | 规划 payload 新增 `current_time`；目标筛选阶段跳过已过期事件，避免触发无意义 AI 请求；应用阶段新增硬拦截 `ai_change_skipped_expired_event`，即使 AI 返回也不会修改过期事件；创建阶段对过期父事件拒绝 `creates` | 风险低；若时区配置异常可能影响“过期”判定边界，回滚可移除过期过滤与拦截分支 | AVO-097 |
+| 2026-03-05 | AVO-096：无意图但发生重叠时仍触发 AI | `avocado/sync/pipeline.py`, `tests/test_sync_engine_invalid_datetime.py` | 新增“重叠触发”目标筛选：当 user 层时间调整导致可调整事件之间出现重叠时，即使 `user_intent` 为空也会加入 `target_uids` 并触发 AI；新增 `overlap_targets_detected` 审计事件 | 风险低；在存在真实重叠时会增加一次 AI 请求，若需回退可移除该筛选分支 | AVO-096 |
+| 2026-03-05 | AVO-095：Sparse phase1 误直接应用修复（强制 phase2） | `avocado/sync/pipeline.py`, `tests/test_ai_request_audit.py` | 在 `sparse_new_event_context_enabled` 模式下，若 phase1 未返回 `context_requests` 但已提出非 target 修改、跨日移动或创建事件，系统会自动生成上下文请求并强制进入 phase2，再以 phase2 结果为准，避免“单轮 phase1 直接改动”绕过上下文补全 | 风险低；会增加部分场景的一次额外 AI 请求，若需回退可关闭 `ai.sparse_new_event_context_enabled` | AVO-095 |
+| 2026-03-04 | AVO-094：新建日程两阶段稀疏上下文（节省 token） | `avocado/sync/pipeline.py`, `avocado/planner.py`, `avocado/core/models/config.py`, `ai_system_prompt.txt`, `config.example.yaml`, `tests/test_{planner,ai_request_audit}.py`, `README.md` | 新增 phase1/phase2 规划流程：新导入目标触发时，phase1 仅发送目标+邻近日程详情，其他日程仅占用信息；若 AI 返回 `context_requests`，自动执行 phase2 补充指定日期完整上下文再出最终 `changes/creates`；审计日志新增 `planning_phase/sparse_context_mode` 字段 | 风险中等；AI 提示词需遵循 `context_requests` 协议，若行为异常可关闭 `ai.sparse_new_event_context_enabled` 回退单轮全量上下文 | AVO-094 |
+| 2026-03-04 | AVO-093：AI Task 块剥离强化 + 全天事件语义修复 | `avocado/task_block.py`, `avocado/sync/pipeline.py`, `avocado/planner.py`, `avocado/reconciler.py`, `avocado/integrations/caldav/codec.py`, `ai_system_prompt.txt`, `tests/test_{task_block,planner,reconciler_all_day,caldav_codec_all_day}.py` | `description` 入 AI 前强制清除 `[AI Task]`（含孤立标记行），降低模型改写元数据风险；payload 显式包含 `all_day`；全天事件解析与写回改为 `VALUE=DATE` 语义（`DTEND` 排他），并在应用 AI 变更时对全天事件时间做归一，避免出现 `00:00->12:00` 异常时段 | 风险中等；全天事件写回格式变化可能暴露旧数据边界问题，回滚可恢复旧 codec 与 reconciler 逻辑 | AVO-093 |
+| 2026-03-04 | AI 条目可读性与并发写回兜底增强 | `avocado/static/admin/{ai_changes.js,utils.js,styles/components.css,index.js,i18n.js}`, `avocado/templates/admin.html`, `avocado/sync/pipeline.py` | AI 条目改为“分组折叠 + 条目折叠”双层展开，默认仅展开最近组/条；组头计数改为独立徽标显示“修改 X 条 / 创建 Y 条”；时间展示从长 ISO 改为短格式（如 `03-08 19:00 -> 03-08 20:30`）；同步写回新增 `user_upsert_retry_recovered` 二次兜底，降低 AI 等待期间并发新增/改动导致 user 层未更新风险 | 风险低；二次重试会增加少量写请求，若服务器限流可回滚重试段落 | AVO-092 |
+| 2026-03-04 | AI 条目阅读优化：分组/条目折叠 + 时间展示简化 | `avocado/static/admin/{ai_changes.js,utils.js,index.js,styles/components.css}`, `avocado/templates/admin.html` | AI 修改条目改为“分组可折叠 + 条目可折叠”双层展开，默认仅展开最近几组和每组最近几条；时间差异展示由完整 ISO 优化为短时间格式（如 `03-08 19:00 -> 03-08 20:30`），减少噪音提升可读性 | 风险低；若用户依赖完整 ISO 可在审计日志原始 JSON 查看，回滚可恢复旧平铺渲染 | AVO-092 |
+| 2026-03-04 | AI 条目分组计数修正：`limit` 改为按分组截断 | `avocado/web_admin/routes/ai.py` | `/api/ai/changes` 的 `limit` 从按条目截断调整为按分组截断，确保单个 AI 返回组不会被截半，`修改/创建`计数与组内条目一致 | 风险低；返回总条目数可能高于 `limit`（因为按组返回完整条目），但可读性和计数准确性提升 | AVO-092 |
+| 2026-03-04 | 管理页 AI 条目重构：按 AI 返回分组并展示创建项 | `avocado/web_admin/routes/ai.py`, `avocado/static/admin/{ai_changes.js,index.js,i18n.js,styles/components.css}`, `avocado/templates/admin.html`, `tests/test_web_admin.py`, `README.md` | `/api/ai/changes` 新增 `groups` 聚合结构，按同一 run/AI 请求分组展示；分组内同时包含 `apply_ai_change`（修改）与 `apply_ai_create`（创建）条目；前端改为“组卡片+条目”布局并增加 `UPDATE/CREATE` 标签，创建项默认不提供撤销/重改菜单，整体可读性更强 | 风险低；接口保留旧 `changes` 平铺字段兼容旧调用，若前端异常可回滚到单列表渲染 | AVO-092 |
+| 2026-03-04 | AVO-092 补充：紧凑 payload 事件键改为全名 | `avocado/planner.py`, `avocado/sync/pipeline.py`, `ai_system_prompt.txt`, `tests/test_planner.py`, `tests/test_ai_request_audit.py`, `tests/test_sync_engine_invalid_datetime.py`, `README.md` | `events_by_uid` 中事件键由 `t/s/l/d/k/i` 改为全名 `time_range/summary/location/description/locked/user_intent`，提升测试日志与 payload 日志可读性；审计 `payload_version` 升级为 `compact_v2` | 风险低；token 轻微增加但便于排障，回滚可恢复短键格式 | AVO-092 |
+| 2026-03-04 | AVO-092 补充：紧凑 payload 固定保留 `t/s/l/d/k/i` 六键 | `avocado/planner.py`, `ai_system_prompt.txt`, `tests/test_planner.py` | `events_by_uid` 事件项改为固定输出六个键（允许空字符串），不再按空值省略 `l/d/i`；提示词输入 schema 同步说明空值语义 | 风险低；token 略有增加但结构一致性更好，回滚可恢复按空值省略策略 | AVO-092 |
 | 2026-03-04 | AVO-092：AI Payload 压缩 + 支持拆分/新建日程（UID 重建） | `avocado/planner.py`, `avocado/sync/pipeline.py`, `ai_system_prompt.txt`, `tests/test_planner.py`, `tests/test_ai_request_audit.py`, `tests/test_sync_engine_invalid_datetime.py`, `README.md` | AI 规划输入改为 `compact_v1`（`events_by_uid + target_uids`），显著减少冗余字段；新增 AI 输出 `creates` 支持，允许“改原事件 + 新建后续段”拆分；`changes` 支持仅靠 `uid` 重建映射；新增创建守卫（每轮上限、每父事件分段上限、父事件锁定校验、时间合法性校验）与幂等 `source_uid`；审计新增 payload 压缩统计字段 | 风险中等；prompt 与模型输出需遵循新 schema，若兼容异常可回退到旧 payload 结构与仅 `changes` 处理链路 | AVO-092 |
 | 2026-03-03 | AVO-091：跨天调整后旧时段残留修复 | `avocado/sync/pipeline.py`, `tests/test_sync_engine_invalid_datetime.py` | AI 本轮成功改动的事件即使被调整到窗口外，也会继续参与本轮 stack/user 写回，避免原时段事件未更新/残留；补充窗口过滤场景回归用例 | 风险低；会对“本轮 AI 改动事件”执行跨窗口写回（预期行为） | AVO-091 |
 | 2026-03-03 | `new` 队列中断恢复：非空即继续入栈并触发 AI | `avocado/sync/pipeline.py`, `tests/test_sync_engine_invalid_datetime.py` | 修复 `new` 中已有历史 mapping 的事件被遗漏问题；`new` 非空（窗口内）时会强制重新入栈并加入 AI 目标，不再被 `same_input_hash` 跳过，确保中断后可恢复处理 | 风险低；若 `new` 清理连续失败，会持续触发 AI（符合“直到处理完成”为止） | AVO-090 |
@@ -144,6 +159,12 @@
 ### Done
 | ID | 标题 | 状态 | 验收标准 | 优先级 | 依赖项 | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AVO-098 | AI Token 降耗（平衡档，全场景稀疏上下文） | Done | 在不启用硬截断输出的前提下，模型路由、上下文稀疏与描述预算可配置；`gpt-5` 路径启用低推理强度并具备兼容回退；审计新增路由与上下文指标 | P0 | AVO-094, AVO-095, AVO-097 | 2026-03-05 |
+| AVO-097 | 禁止 AI 修改过期日程 + payload 注入 current_time | Done | 请求中包含 current_time；AI 对已过期事件不再触发/不再落地修改，创建也不允许基于过期父事件展开 | P0 | AVO-095, AVO-096 | 2026-03-05 |
+| AVO-096 | 无意图但发生重叠时仍触发 AI | Done | 用户手动改时间造成重叠时，系统即使无 `user_intent` 也会触发 AI 进行冲突消解 | P0 | AVO-095 | 2026-03-05 |
+| AVO-095 | Sparse phase1 误直接应用修复（强制 phase2） | Done | 在稀疏模式下若 phase1 给出跨上下文改动但未请求上下文，系统自动触发 phase2，避免直接应用 phase1 结果 | P0 | AVO-094 | 2026-03-05 |
+| AVO-094 | 新建日程两阶段稀疏上下文（节省 token） | Done | 新建/新导入目标触发时第一轮仅发送邻近详情，支持 `context_requests` 触发第二轮补充上下文后再落地改动 | P0 | AVO-092, AVO-093 | 2026-03-04 |
+| AVO-093 | AI Task payload 剥离与全天事件语义修复 | Done | 发送给 AI 的 description 不再含 `[AI Task]`；全天事件在 AI/回写链路保持 all-day 语义，避免被改写成 `00:00-12:00` 短时段 | P0 | AVO-092 | 2026-03-04 |
 | AVO-092 | AI Payload 压缩 + 支持拆分/新建日程（UID 重建） | Done | 规划输入改为 `events_by_uid + target_uids` 紧凑 schema；AI 返回支持 `changes(uid-only)+creates`；创建链路具备幂等和分段/时间/锁定守卫；提示词与测试同步更新 | P0 | AVO-063, AVO-091 | 2026-03-04 |
 | AVO-091 | 跨天调整后旧事件未删除残留修复 | Done | 当 AI/同步把事件调整到隔天（超出当前窗口）后，仍在同轮写回更新，避免原时段残留重复日程 | P0 | AVO-090 | 2026-03-03 |
 | AVO-008 | 真实 CalDAV 端到端兼容验证（Nextcloud/iCloud） | Done | 在至少 2 种服务器上完成拉取、写回、冲突场景验证并记录差异 | P0 | AVO-005, AVO-006 | 2026-03-03 |

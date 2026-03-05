@@ -17,7 +17,7 @@ from avocado.core.models import (
 
 AI_TASK_START = "[AI Task]"
 AI_TASK_END = "[/AI Task]"
-AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*\n(.*?)\n\[/AI Task\]", re.DOTALL)
+AI_TASK_PATTERN = re.compile(r"\[AI Task\]\s*(.*?)\s*\[/AI Task\]", re.DOTALL)
 ALLOWED_TASK_KEYS = set(AI_TASK_ALL_FIELDS)
 logger = logging.getLogger(__name__)
 LOCK_MARKER_PATTERN = re.compile(r"(?:^|\s)\.lock(?:\s|$)", re.IGNORECASE)
@@ -159,8 +159,9 @@ def parse_ai_task_block(description: str) -> dict[str, Any] | None:
 def strip_ai_task_block(description: str) -> str:
     if not description:
         return ""
-    cleaned = AI_TASK_PATTERN.sub("", description).strip()
-    return cleaned
+    cleaned = AI_TASK_PATTERN.sub("", description)
+    cleaned = _strip_orphan_ai_task_markers(cleaned)
+    return cleaned.strip()
 
 
 def _normalize_task(parsed: dict[str, Any], defaults: TaskDefaultsConfig) -> dict[str, Any]:

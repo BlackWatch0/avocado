@@ -4,13 +4,13 @@ import json
 import hashlib
 import re
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from avocado.ai_client import OpenAICompatibleClient
 from avocado.core.models import EventRecord, SyncResult, parse_iso_datetime, serialize_datetime
 from avocado.integrations.caldav import CalDAVService
-from avocado.planner import build_messages, build_planning_payload, normalize_ai_plan_result
+from avocado.planner import COMPACT_PAYLOAD_VERSION, build_messages, build_planning_payload, normalize_ai_plan_result
 from avocado.reconciler import apply_change
 from avocado.sync.helpers_identity import _event_fingerprint, _hash_text
 from avocado.sync.helpers_intent import (
@@ -101,6 +101,220 @@ def _compute_high_load_auto_metrics(
         "conflict_pairs": int(conflict_pairs),
         "score_threshold": float(max(0.0, score_threshold)),
     }
+
+
+def _event_sort_key_for_context(item: dict[str, Any]) -> tuple[datetime, datetime, str]:
+    start_text = str(item.get("start", "") or "").strip()
+    end_text = str(item.get("end", "") or "").strip()
+    try:
+        start_dt = parse_iso_datetime(start_text) or datetime.max.replace(tzinfo=timezone.utc)
+    except Exception:
+        start_dt = datetime.max.replace(tzinfo=timezone.utc)
+    try:
+        end_dt = parse_iso_datetime(end_text) or datetime.max.replace(tzinfo=timezone.utc)
+    except Exception:
+        end_dt = datetime.max.replace(tzinfo=timezone.utc)
+    uid = str(item.get("uid", "") or "").strip()
+    return start_dt, end_dt, uid
+
+
+def _ordered_event_uids(payload_events: list[dict[str, Any]]) -> list[str]:
+    sorted_events = sorted(payload_events, key=_event_sort_key_for_context)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in sorted_events:
+        uid = str(item.get("uid", "") or "").strip()
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        ordered.append(uid)
+    return ordered
+
+
+def _cap_full_detail_uids(
+    *,
+    payload_events: list[dict[str, Any]],
+    target_uids: list[str],
+    preferred_uids: set[str],
+    max_full_detail_events: int,
+) -> set[str]:
+    ordered_targets: list[str] = []
+    seen_targets: set[str] = set()
+    for uid in target_uids:
+        uid_text = str(uid or "").strip()
+        if not uid_text or uid_text in seen_targets:
+            continue
+        seen_targets.add(uid_text)
+        ordered_targets.append(uid_text)
+    event_uid_order = _ordered_event_uids(payload_events)
+    max_count = max(1, int(max_full_detail_events))
+    max_count = max(max_count, len(ordered_targets))
+    ordered_selected: list[str] = []
+    seen_selected: set[str] = set()
+
+    def _append(uid: str) -> None:
+        if len(ordered_selected) >= max_count:
+            return
+        if not uid or uid in seen_selected:
+            return
+        if uid not in preferred_uids and uid not in seen_targets:
+            return
+        seen_selected.add(uid)
+        ordered_selected.append(uid)
+
+    for uid in ordered_targets:
+        _append(uid)
+    for uid in event_uid_order:
+        _append(uid)
+    return set(ordered_selected)
+
+
+def _build_full_detail_uid_set_for_targets(
+    payload_events: list[dict[str, Any]],
+    target_uids: list[str],
+    neighbor_count: int = 1,
+    max_full_detail_events: int = 10,
+) -> set[str]:
+    sorted_events = sorted(payload_events, key=_event_sort_key_for_context)
+    uid_to_index: dict[str, int] = {}
+    for index, item in enumerate(sorted_events):
+        uid = str(item.get("uid", "") or "").strip()
+        if uid and uid not in uid_to_index:
+            uid_to_index[uid] = index
+    ordered_target_uids: list[str] = []
+    seen_targets: set[str] = set()
+    for uid in target_uids:
+        uid_text = str(uid or "").strip()
+        if not uid_text or uid_text in seen_targets:
+            continue
+        seen_targets.add(uid_text)
+        ordered_target_uids.append(uid_text)
+    full_uids: set[str] = set(ordered_target_uids)
+    max_count = max(1, int(max_full_detail_events))
+    max_count = max(max_count, len(ordered_target_uids))
+    radius = max(0, int(neighbor_count))
+    if radius > 0:
+        for offset in range(1, radius + 1):
+            for target_uid in ordered_target_uids:
+                if len(full_uids) >= max_count:
+                    break
+                index = uid_to_index.get(target_uid)
+                if index is None:
+                    continue
+                neighbor_indexes = [index - offset, index + offset]
+                for neighbor_index in neighbor_indexes:
+                    if len(full_uids) >= max_count:
+                        break
+                    if neighbor_index < 0 or neighbor_index >= len(sorted_events):
+                        continue
+                    neighbor_uid = str(sorted_events[neighbor_index].get("uid", "") or "").strip()
+                    if neighbor_uid:
+                        full_uids.add(neighbor_uid)
+            if len(full_uids) >= max_count:
+                break
+    return _cap_full_detail_uids(
+        payload_events=payload_events,
+        target_uids=ordered_target_uids,
+        preferred_uids=full_uids,
+        max_full_detail_events=max_count,
+    )
+
+
+def _context_request_to_range(item: dict[str, Any]) -> tuple[datetime, datetime] | None:
+    if not isinstance(item, dict):
+        return None
+    start_text = str(item.get("start", "") or "").strip()
+    end_text = str(item.get("end", "") or "").strip()
+    date_text = str(item.get("date", "") or "").strip()
+    if date_text:
+        try:
+            day = date.fromisoformat(date_text)
+            start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+            end = start + timedelta(days=1)
+            return start, end
+        except Exception:
+            return None
+    if not start_text or not end_text:
+        return None
+    try:
+        start = parse_iso_datetime(start_text)
+        end = parse_iso_datetime(end_text)
+    except Exception:
+        return None
+    if start is None or end is None or end <= start:
+        return None
+    return start, end
+
+
+def _expand_full_detail_uids_by_context_requests(
+    payload_events: list[dict[str, Any]],
+    base_full_uids: set[str],
+    context_requests: list[dict[str, Any]],
+    target_uids: list[str],
+    max_full_detail_events: int,
+) -> set[str]:
+    full_uids = set(base_full_uids)
+    ranges = [_context_request_to_range(item) for item in context_requests]
+    valid_ranges = [item for item in ranges if item is not None]
+    if not valid_ranges:
+        return _cap_full_detail_uids(
+            payload_events=payload_events,
+            target_uids=target_uids,
+            preferred_uids=full_uids,
+            max_full_detail_events=max_full_detail_events,
+        )
+    for item in payload_events:
+        uid = str(item.get("uid", "") or "").strip()
+        if not uid:
+            continue
+        start_text = str(item.get("start", "") or "").strip()
+        end_text = str(item.get("end", "") or "").strip()
+        try:
+            event_start = parse_iso_datetime(start_text)
+            event_end = parse_iso_datetime(end_text)
+        except Exception:
+            continue
+        if event_start is None or event_end is None or event_end <= event_start:
+            continue
+        for range_start, range_end in valid_ranges:
+            if event_start < range_end and event_end > range_start:
+                full_uids.add(uid)
+                break
+    return _cap_full_detail_uids(
+        payload_events=payload_events,
+        target_uids=target_uids,
+        preferred_uids=full_uids,
+        max_full_detail_events=max_full_detail_events,
+    )
+
+
+def _extract_iso_day(value: Any) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = parse_iso_datetime(text)
+    except Exception:
+        return None
+    if parsed is None:
+        return None
+    return parsed.date()
+
+
+def _event_is_frozen(event: EventRecord, *, freeze_hours: int, freeze_cutoff: datetime) -> bool:
+    if not bool(freeze_hours):
+        return False
+    if event.start is None:
+        return False
+    return event.start.astimezone(timezone.utc) <= freeze_cutoff
+
+
+def _event_is_expired(event: EventRecord, *, now_utc: datetime) -> bool:
+    if event.end is not None:
+        return event.end.astimezone(timezone.utc) <= now_utc
+    if event.start is not None:
+        return event.start.astimezone(timezone.utc) <= now_utc
+    return False
 
 
 class PipelineMixin:
@@ -204,6 +418,7 @@ class PipelineMixin:
                 end_override=window_end_override,
             )
             query_window_end = self._query_window_end(window_start, window_end)
+            planning_now = datetime.now(timezone.utc)
             _audit(
                 calendar_id="system",
                 uid="sync",
@@ -505,14 +720,15 @@ class PipelineMixin:
                         "locked": bool(_event_locked_for_ai(event)),
                     }
                 )
-                frozen = (
-                    bool(config.sync.freeze_hours)
-                    and event.start is not None
-                    and event.start.astimezone(timezone.utc) <= freeze_cutoff
+                frozen = _event_is_frozen(
+                    event,
+                    freeze_hours=int(config.sync.freeze_hours),
+                    freeze_cutoff=freeze_cutoff,
                 )
                 has_user_intent = _event_has_user_intent(event)
                 is_newly_imported = sync_id in newly_imported_sync_ids
-                if not _event_locked_for_ai(event) and not frozen and (has_user_intent or is_newly_imported):
+                expired = _event_is_expired(event, now_utc=planning_now)
+                if not _event_locked_for_ai(event) and not frozen and not expired and (has_user_intent or is_newly_imported):
                     if has_user_intent:
                         target_intent = _extract_user_intent(event)
                     else:
@@ -523,34 +739,95 @@ class PipelineMixin:
                     if event.uid:
                         target_intents_by_uid[event.uid] = target_intent
 
+            overlap_target_uids: set[str] = set()
+            planning_events_for_overlap = [item for item in planning_events if item.uid and not item.all_day]
+            for idx in range(len(planning_events_for_overlap)):
+                left_event = planning_events_for_overlap[idx]
+                for jdx in range(idx + 1, len(planning_events_for_overlap)):
+                    right_event = planning_events_for_overlap[jdx]
+                    if not _event_overlap(left_event, right_event):
+                        continue
+                    for candidate in (left_event, right_event):
+                        if not candidate.uid:
+                            continue
+                        if _event_locked_for_ai(candidate):
+                            continue
+                        if _event_is_frozen(
+                            candidate,
+                            freeze_hours=int(config.sync.freeze_hours),
+                            freeze_cutoff=freeze_cutoff,
+                        ):
+                            continue
+                        if _event_is_expired(candidate, now_utc=planning_now):
+                            continue
+                        overlap_target_uids.add(candidate.uid)
+
+            if overlap_target_uids:
+                for uid in sorted(overlap_target_uids):
+                    if uid not in target_uid_set:
+                        target_uid_set.add(uid)
+                        target_uids.append(uid)
+                    if not str(target_intents_by_uid.get(uid, "") or "").strip():
+                        target_intents_by_uid[uid] = "Resolve schedule overlap conflicts while preserving locked events."
+                _audit(
+                    calendar_id="system",
+                    uid="ai",
+                    action="overlap_targets_detected",
+                    details={
+                        "overlap_target_count": len(overlap_target_uids),
+                        "overlap_target_uids": sorted(overlap_target_uids),
+                    },
+                )
+
             ai_input_hash = _hash_text(json.dumps(hash_items, ensure_ascii=False, sort_keys=True))
             last_ai_hash = self.state_store.get_meta("last_applied_ai_hash")
             force_ai_due_to_new_inbox = inbox_pending_count > 0
             raw_ai_result: dict[str, Any] = {"changes": [], "creates": []}
-            payload_char_count = 0
 
             if config.ai.enabled and target_uids and (
                 ai_input_hash != last_ai_hash or force_ai_due_to_new_inbox
             ):
                 ai_client = OpenAICompatibleClient(config.ai)
                 if ai_client.is_configured():
-                    selected_model = str(config.ai.model or "").strip()
+                    base_model = str(config.ai.model or "").strip()
+                    selected_model = base_model
                     high_load_model = str(getattr(config.ai, "high_load_model", "") or "").strip()
-                    high_load_threshold = int(getattr(config.ai, "high_load_event_threshold", 0) or 0)
-                    high_load_manual_active = high_load_threshold > 0 and len(planning_events) >= high_load_threshold
-                    high_load_auto_enabled = bool(getattr(config.ai, "high_load_auto_enabled", False))
+                    high_load_manual_active = False
+                    high_load_auto_enabled = bool(getattr(config.ai, "high_load_auto_enabled", True))
+                    high_load_min_event_count = max(1, int(getattr(config.ai, "high_load_min_event_count", 20) or 20))
                     high_load_auto_metrics = _compute_high_load_auto_metrics(
                         planning_events=planning_events,
                         window_start=window_start,
                         window_end=window_end,
-                        event_baseline=int(getattr(config.ai, "high_load_auto_event_baseline", 12) or 12),
-                        score_threshold=float(getattr(config.ai, "high_load_auto_score_threshold", 0.65) or 0.65),
+                        event_baseline=int(getattr(config.ai, "high_load_auto_event_baseline", 20) or 20),
+                        score_threshold=float(getattr(config.ai, "high_load_auto_score_threshold", 0.80) or 0.80),
                     )
-                    high_load_auto_active = high_load_auto_enabled and bool(high_load_auto_metrics.get("active", False))
-                    high_load_active = high_load_manual_active or high_load_auto_active
+                    high_load_auto_active = (
+                        high_load_auto_enabled
+                        and bool(high_load_auto_metrics.get("active", False))
+                        and len(planning_events) >= high_load_min_event_count
+                    )
+                    high_load_active = high_load_auto_active
+                    model_route = "high_load" if bool(high_load_model) and high_load_active else "base"
+                    model_route_reason = "base_default"
+                    if model_route == "high_load":
+                        model_route_reason = "auto_score_threshold_and_min_event_count_met"
+                    elif (
+                        high_load_auto_enabled
+                        and bool(high_load_model)
+                        and bool(high_load_auto_metrics.get("active", False))
+                        and len(planning_events) < high_load_min_event_count
+                    ):
+                        model_route_reason = "auto_score_met_but_below_min_event_count"
                     if high_load_model and high_load_active:
                         selected_model = high_load_model
                     use_flex_tier = bool(getattr(config.ai, "high_load_use_flex", False)) and high_load_active
+                    configured_reasoning_effort = (
+                        str(getattr(config.ai, "high_load_reasoning_effort", "low") or "").strip().lower() or "low"
+                    )
+                    selected_reasoning_effort = ""
+                    if high_load_active and configured_reasoning_effort in {"low", "medium", "high"}:
+                        selected_reasoning_effort = configured_reasoning_effort
                     payload_events: list[dict[str, Any]] = []
                     for event in planning_events:
                         visible_description, ai_task, _ = ai_task_payload_from_description(
@@ -564,12 +841,152 @@ class PipelineMixin:
                             "summary": str(event.summary or ""),
                             "location": str(event.location or ""),
                             "description": visible_description,
+                            "all_day": bool(event.all_day),
                             "locked": bool(ai_task.get("locked", event.locked)),
                         }
                         if event.uid in target_uid_set:
                             payload_event["user_intent"] = target_intents_by_uid.get(event.uid, "")
                         payload_events.append(payload_event)
-                    payload = build_planning_payload(
+                    payload_event_by_uid: dict[str, dict[str, Any]] = {}
+                    for item in payload_events:
+                        uid = str(item.get("uid", "") or "").strip()
+                        if uid and uid not in payload_event_by_uid:
+                            payload_event_by_uid[uid] = item
+                    has_new_import_targets = any(
+                        bool(stack_uid_to_sync_id.get(uid) in newly_imported_sync_ids)
+                        for uid in target_uids
+                    )
+                    sparse_context_enabled = bool(getattr(config.ai, "sparse_new_event_context_enabled", True))
+                    sparse_context_scope = (
+                        str(getattr(config.ai, "sparse_context_scope", "all_targets") or "").strip().lower()
+                        or "all_targets"
+                    )
+                    if sparse_context_scope not in {"new_only", "all_targets"}:
+                        sparse_context_scope = "all_targets"
+                    if sparse_context_scope == "new_only":
+                        sparse_mode_active = sparse_context_enabled and has_new_import_targets
+                    else:
+                        sparse_mode_active = sparse_context_enabled and bool(target_uids)
+                    neighbor_count = max(0, int(getattr(config.ai, "sparse_new_event_neighbor_count", 1) or 1))
+                    max_context_requests = max(1, int(getattr(config.ai, "sparse_new_event_max_context_requests", 3) or 3))
+                    max_full_detail_events = max(
+                        1, int(getattr(config.ai, "payload_max_full_detail_events", 10) or 10)
+                    )
+                    target_description_max_chars = max(
+                        1, int(getattr(config.ai, "payload_target_description_max_chars", 160) or 160)
+                    )
+                    neighbor_description_max_chars = max(
+                        1, int(getattr(config.ai, "payload_neighbor_description_max_chars", 80) or 80)
+                    )
+
+                    def _invoke_ai_with_payload(payload: dict[str, Any], phase: str) -> dict[str, Any]:
+                        messages = build_messages(payload, system_prompt=config.ai.system_prompt)
+                        request_payload = {
+                            "model": selected_model,
+                            "messages": messages,
+                            "response_format": {"type": "json_object"},
+                        }
+                        if not selected_model.startswith("gpt-5"):
+                            request_payload["temperature"] = 0.2
+                        if selected_reasoning_effort:
+                            request_payload["reasoning_effort"] = selected_reasoning_effort
+                        if use_flex_tier:
+                            request_payload["service_tier"] = "flex"
+                        request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
+                        client_config = getattr(ai_client, "config", None)
+                        if client_config is not None and hasattr(client_config, "model"):
+                            original_model = str(getattr(client_config, "model", "") or "").strip()
+                            original_service_tier = str(getattr(client_config, "_request_service_tier", "") or "").strip()
+                            original_reasoning_effort = str(
+                                getattr(client_config, "_request_reasoning_effort", "") or ""
+                            ).strip()
+                            client_config.model = selected_model
+                            client_config._request_service_tier = "flex" if use_flex_tier else ""
+                            client_config._request_reasoning_effort = selected_reasoning_effort
+                            try:
+                                result = ai_client.generate_changes(messages=messages) or {"changes": [], "creates": []}
+                            finally:
+                                client_config.model = original_model
+                                client_config._request_service_tier = original_service_tier
+                                client_config._request_reasoning_effort = original_reasoning_effort
+                        else:
+                            result = ai_client.generate_changes(messages=messages) or {"changes": [], "creates": []}
+                        usage = dict(getattr(ai_client, "last_usage", {}) or {})
+                        payload_events_by_uid = payload.get("events_by_uid", {}) if isinstance(payload, dict) else {}
+                        full_detail_events_count = 0
+                        busy_events_count = 0
+                        description_chars_sent = 0
+                        if isinstance(payload_events_by_uid, dict):
+                            for item in payload_events_by_uid.values():
+                                if not isinstance(item, dict):
+                                    continue
+                                if str(item.get("detail_level", "") or "").strip().lower() == "full":
+                                    full_detail_events_count += 1
+                                else:
+                                    busy_events_count += 1
+                                description_chars_sent += len(str(item.get("description", "") or ""))
+                        payload_char_count = len(json.dumps(payload, ensure_ascii=False))
+                        _audit(
+                            calendar_id="system",
+                            uid="ai",
+                            action="ai_request",
+                            details={
+                                "request_bytes": request_bytes,
+                                "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                                "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+                                "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                                "target_events_count": len(target_uids),
+                                "target_uids_count": len(target_uids),
+                                "planning_events_count": len(planning_events),
+                                "events_sent_count": len(payload_events_by_uid) if isinstance(payload_events_by_uid, dict) else 0,
+                                "payload_char_count": int(payload_char_count),
+                                "payload_version": COMPACT_PAYLOAD_VERSION,
+                                "planning_phase": phase,
+                                "sparse_context_mode": bool(sparse_mode_active),
+                                "sparse_context_scope": sparse_context_scope,
+                                "inbox_pending_count": int(inbox_pending_count),
+                                "forced_by_new_inbox": bool(force_ai_due_to_new_inbox),
+                                "ai_input_hash": ai_input_hash,
+                                "model": selected_model,
+                                "model_route": model_route,
+                                "model_route_reason": model_route_reason,
+                                "high_load_model_active": bool(selected_model != str(config.ai.model or "").strip()),
+                                "high_load_manual_active": high_load_manual_active,
+                                "high_load_auto_enabled": high_load_auto_enabled,
+                                "high_load_auto_active": high_load_auto_active,
+                                "high_load_min_event_count": high_load_min_event_count,
+                                "high_load_auto_score": float(high_load_auto_metrics.get("score", 0.0) or 0.0),
+                                "high_load_auto_score_threshold": float(
+                                    high_load_auto_metrics.get("score_threshold", 0.0) or 0.0
+                                ),
+                                "high_load_auto_density_ratio": float(
+                                    high_load_auto_metrics.get("density_ratio", 0.0) or 0.0
+                                ),
+                                "high_load_auto_count_ratio": float(
+                                    high_load_auto_metrics.get("count_ratio", 0.0) or 0.0
+                                ),
+                                "high_load_auto_conflict_ratio": float(
+                                    high_load_auto_metrics.get("conflict_ratio", 0.0) or 0.0
+                                ),
+                                "high_load_auto_conflict_pairs": int(
+                                    high_load_auto_metrics.get("conflict_pairs", 0) or 0
+                                ),
+                                "service_tier": "flex" if use_flex_tier else "",
+                                "reasoning_effort": selected_reasoning_effort or "",
+                                "full_detail_events_count": int(full_detail_events_count),
+                                "busy_events_count": int(busy_events_count),
+                                "description_chars_sent": int(description_chars_sent),
+                            },
+                        )
+                        return result
+
+                    phase1_full_uids = _build_full_detail_uid_set_for_targets(
+                        payload_events=payload_events,
+                        target_uids=target_uids,
+                        neighbor_count=neighbor_count,
+                        max_full_detail_events=max_full_detail_events,
+                    )
+                    phase1_payload = build_planning_payload(
                         events=None,
                         events_payload=payload_events,
                         window_start=serialize_datetime(window_start) or "",
@@ -577,74 +994,105 @@ class PipelineMixin:
                         timezone=effective_timezone,
                         target_uids=target_uids,
                         compact=True,
+                        sparse_other_events=sparse_mode_active,
+                        full_detail_uids=sorted(phase1_full_uids),
+                        target_description_max_chars=target_description_max_chars,
+                        neighbor_description_max_chars=neighbor_description_max_chars,
+                        planning_phase="phase1",
+                        current_time=serialize_datetime(planning_now) or "",
                     )
-                    payload_char_count = len(json.dumps(payload, ensure_ascii=False))
-                    messages = build_messages(payload, system_prompt=config.ai.system_prompt)
-                    request_payload = {
-                        "model": selected_model,
-                        "messages": messages,
-                        "temperature": 0.2,
-                        "response_format": {"type": "json_object"},
-                    }
-                    if use_flex_tier:
-                        request_payload["service_tier"] = "flex"
-                    request_bytes = len(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"))
-                    client_config = getattr(ai_client, "config", None)
-                    if client_config is not None and hasattr(client_config, "model"):
-                        original_model = str(getattr(client_config, "model", "") or "").strip()
-                        original_service_tier = str(getattr(client_config, "_request_service_tier", "") or "").strip()
-                        client_config.model = selected_model
-                        client_config._request_service_tier = "flex" if use_flex_tier else ""
-                        try:
-                            raw_ai_result = ai_client.generate_changes(messages=messages) or {"changes": [], "creates": []}
-                        finally:
-                            client_config.model = original_model
-                            client_config._request_service_tier = original_service_tier
+                    phase1_result = _invoke_ai_with_payload(phase1_payload, "phase1")
+                    phase1_plan = normalize_ai_plan_result(phase1_result)
+                    context_requests = list(phase1_plan.get("context_requests", []) or [])
+                    if sparse_mode_active and not context_requests:
+                        forced_dates: set[date] = set()
+                        force_phase2 = False
+                        phase1_changes = list(phase1_plan.get("changes", []) or [])
+                        phase1_creates = list(phase1_plan.get("creates", []) or [])
+
+                        for change in phase1_changes:
+                            uid = str(change.get("uid", "") or "").strip()
+                            if not uid:
+                                continue
+                            if uid not in target_uid_set:
+                                force_phase2 = True
+                            original_item = payload_event_by_uid.get(uid, {})
+                            original_range = original_item.get("start", "") if isinstance(original_item, dict) else ""
+                            original_day = _extract_iso_day(original_range)
+                            proposed_start_day = _extract_iso_day(change.get("start"))
+                            proposed_end_day = _extract_iso_day(change.get("end"))
+                            if original_day is not None:
+                                forced_dates.add(original_day)
+                            if proposed_start_day is not None:
+                                forced_dates.add(proposed_start_day)
+                            if proposed_end_day is not None:
+                                forced_dates.add(proposed_end_day)
+                            if uid in target_uid_set and proposed_start_day is not None and original_day is not None:
+                                if proposed_start_day != original_day:
+                                    force_phase2 = True
+
+                        if phase1_creates:
+                            force_phase2 = True
+                            for create in phase1_creates:
+                                parent_uid = str(create.get("from_uid", "") or "").strip()
+                                parent_item = payload_event_by_uid.get(parent_uid, {})
+                                parent_start = parent_item.get("start", "") if isinstance(parent_item, dict) else ""
+                                parent_day = _extract_iso_day(parent_start)
+                                if parent_day is not None:
+                                    forced_dates.add(parent_day)
+                                create_start_day = _extract_iso_day(create.get("start"))
+                                create_end_day = _extract_iso_day(create.get("end"))
+                                if create_start_day is not None:
+                                    forced_dates.add(create_start_day)
+                                if create_end_day is not None:
+                                    forced_dates.add(create_end_day)
+
+                        if force_phase2:
+                            for day in sorted(forced_dates):
+                                context_requests.append(
+                                    {
+                                        "date": day.isoformat(),
+                                        "reason": "auto_expand_due_to_sparse_phase1_changes",
+                                    }
+                                )
+                            _audit(
+                                calendar_id="system",
+                                uid="ai",
+                                action="ai_sparse_phase2_forced",
+                                details={
+                                    "forced_context_count": len(context_requests),
+                                    "phase1_change_count": len(phase1_changes),
+                                    "phase1_create_count": len(phase1_creates),
+                                },
+                            )
+                    if sparse_mode_active and context_requests:
+                        bounded_context_requests = context_requests[:max_context_requests]
+                        phase2_full_uids = _expand_full_detail_uids_by_context_requests(
+                            payload_events=payload_events,
+                            base_full_uids=phase1_full_uids,
+                            context_requests=bounded_context_requests,
+                            target_uids=target_uids,
+                            max_full_detail_events=max_full_detail_events,
+                        )
+                        phase2_payload = build_planning_payload(
+                            events=None,
+                            events_payload=payload_events,
+                            window_start=serialize_datetime(window_start) or "",
+                            window_end=serialize_datetime(window_end) or "",
+                            timezone=effective_timezone,
+                            target_uids=target_uids,
+                            compact=True,
+                            sparse_other_events=True,
+                            full_detail_uids=sorted(phase2_full_uids),
+                            target_description_max_chars=target_description_max_chars,
+                            neighbor_description_max_chars=neighbor_description_max_chars,
+                            planning_phase="phase2",
+                            requested_context=bounded_context_requests,
+                            current_time=serialize_datetime(planning_now) or "",
+                        )
+                        raw_ai_result = _invoke_ai_with_payload(phase2_payload, "phase2")
                     else:
-                        raw_ai_result = ai_client.generate_changes(messages=messages) or {"changes": [], "creates": []}
-                    usage = dict(getattr(ai_client, "last_usage", {}) or {})
-                    _audit(
-                        calendar_id="system",
-                        uid="ai",
-                        action="ai_request",
-                        details={
-                            "request_bytes": request_bytes,
-                            "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
-                            "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
-                            "total_tokens": int(usage.get("total_tokens", 0) or 0),
-                            "target_events_count": len(target_uids),
-                            "target_uids_count": len(target_uids),
-                            "planning_events_count": len(planning_events),
-                            "events_sent_count": len(payload.get("events_by_uid", {})),
-                            "payload_char_count": int(payload_char_count),
-                            "payload_version": "compact_v1",
-                            "inbox_pending_count": int(inbox_pending_count),
-                            "forced_by_new_inbox": bool(force_ai_due_to_new_inbox),
-                            "ai_input_hash": ai_input_hash,
-                            "model": selected_model,
-                            "high_load_model_active": bool(selected_model != str(config.ai.model or "").strip()),
-                            "high_load_manual_active": high_load_manual_active,
-                            "high_load_auto_enabled": high_load_auto_enabled,
-                            "high_load_auto_active": high_load_auto_active,
-                            "high_load_auto_score": float(high_load_auto_metrics.get("score", 0.0) or 0.0),
-                            "high_load_auto_score_threshold": float(
-                                high_load_auto_metrics.get("score_threshold", 0.0) or 0.0
-                            ),
-                            "high_load_auto_density_ratio": float(
-                                high_load_auto_metrics.get("density_ratio", 0.0) or 0.0
-                            ),
-                            "high_load_auto_count_ratio": float(
-                                high_load_auto_metrics.get("count_ratio", 0.0) or 0.0
-                            ),
-                            "high_load_auto_conflict_ratio": float(
-                                high_load_auto_metrics.get("conflict_ratio", 0.0) or 0.0
-                            ),
-                            "high_load_auto_conflict_pairs": int(
-                                high_load_auto_metrics.get("conflict_pairs", 0) or 0
-                            ),
-                            "service_tier": "flex" if use_flex_tier else "",
-                        },
-                    )
+                        raw_ai_result = phase1_result
                 else:
                     _audit(calendar_id="system", uid="ai", action="skip_ai_not_configured", details={})
             elif not config.ai.enabled:
@@ -695,10 +1143,18 @@ class PipelineMixin:
                         details={},
                     )
                     continue
-                frozen = (
-                    bool(config.sync.freeze_hours)
-                    and current_event.start is not None
-                    and current_event.start.astimezone(timezone.utc) <= freeze_cutoff
+                if _event_is_expired(current_event, now_utc=planning_now):
+                    _audit(
+                        calendar_id=current_event.calendar_id,
+                        uid=current_event.uid,
+                        action="ai_change_skipped_expired_event",
+                        details={"now": serialize_datetime(planning_now)},
+                    )
+                    continue
+                frozen = _event_is_frozen(
+                    current_event,
+                    freeze_hours=int(config.sync.freeze_hours),
+                    freeze_cutoff=freeze_cutoff,
                 )
                 if frozen and ("start" in change or "end" in change):
                     _audit(
@@ -827,6 +1283,14 @@ class PipelineMixin:
                         uid=parent_event.uid,
                         action="ai_create_invalid_parent",
                         details={"from_uid": from_uid, "reason": "parent_locked"},
+                    )
+                    continue
+                if _event_is_expired(parent_event, now_utc=planning_now):
+                    _audit(
+                        calendar_id=parent_event.calendar_id,
+                        uid=parent_event.uid,
+                        action="ai_create_invalid_parent",
+                        details={"from_uid": from_uid, "reason": "parent_expired"},
                     )
                     continue
                 current_parent_create_count = int(creates_by_parent.get(from_uid, 0) or 0)
@@ -1039,6 +1503,7 @@ class PipelineMixin:
                         details={"reason": "stack_delete_failed"},
                     )
 
+            failed_user_upserts: list[tuple[str, str, EventRecord]] = []
             for uid, (sync_id, desired_event) in desired_user_by_uid.items():
                 if sync_id in deleted_sync_ids:
                     continue
@@ -1052,6 +1517,7 @@ class PipelineMixin:
                     current_event=current_event,
                 )
                 if not ok:
+                    failed_user_upserts.append((uid, sync_id, desired_event))
                     failed_sync_ids.add(sync_id)
                     conflicts += 1
                     _audit(
@@ -1064,6 +1530,31 @@ class PipelineMixin:
                 changes_applied += 1
                 if saved is not None:
                     current_user_by_uid[uid] = saved
+
+            # Concurrency safeguard: if user calendar changed while waiting AI, retry failed
+            # upserts once more with the latest remote event state.
+            for uid, sync_id, desired_event in failed_user_upserts:
+                latest_event = caldav_service.get_event_by_uid(user_info.calendar_id, uid)
+                ok, saved = self._apply_upsert_with_retry(
+                    caldav_service=caldav_service,
+                    calendar_id=user_info.calendar_id,
+                    desired_event=desired_event,
+                    current_event=latest_event,
+                )
+                if not ok:
+                    continue
+                if sync_id in failed_sync_ids and conflicts > 0:
+                    failed_sync_ids.discard(sync_id)
+                    conflicts -= 1
+                changes_applied += 1
+                if saved is not None:
+                    current_user_by_uid[uid] = saved
+                _audit(
+                    calendar_id=user_info.calendar_id,
+                    uid=uid,
+                    action="user_upsert_retry_recovered",
+                    details={"sync_id": sync_id},
+                )
 
             for sync_id in deleted_sync_ids:
                 mapping = mapping_by_sync.get(sync_id)

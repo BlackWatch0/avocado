@@ -129,21 +129,51 @@ class AIClientPayloadLoggingTests(unittest.TestCase):
             last_call_json = post_mock.call_args.kwargs.get("json", {})
             self.assertEqual(last_call_json.get("service_tier"), "auto")
 
-    def test_generate_changes_retries_with_temperature_one_on_unsupported_400(self) -> None:
+    def test_generate_changes_gpt5_omits_temperature_and_sends_reasoning_effort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "ai_payload_exchange.jsonl"
             client = self._make_client(log_path)
             client.config.model = "gpt-5"
+            client.config._request_reasoning_effort = "low"
+
+            mock_ok = mock.Mock()
+            mock_ok.status_code = 200
+            mock_ok.ok = True
+            mock_ok.raise_for_status.return_value = None
+            mock_ok.json.return_value = {
+                "choices": [{"message": {"content": '{"changes": []}'}}],
+            }
+
+            with mock.patch("avocado.ai_client.requests.post", return_value=mock_ok) as post_mock:
+                result = client.generate_changes(messages=[{"role": "user", "content": "test"}])
+
+            self.assertEqual(result, {"changes": []})
+            self.assertEqual(post_mock.call_count, 1)
+            sent_json = post_mock.call_args.kwargs.get("json", {})
+            self.assertNotIn("temperature", sent_json)
+            self.assertEqual(sent_json.get("reasoning_effort"), "low")
+            lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 1)
+            payload = json.loads(lines[0])
+            self.assertEqual(payload["response_status"], 200)
+            self.assertEqual(payload["request"].get("reasoning_effort"), "low")
+
+    def test_generate_changes_retries_without_reasoning_effort_on_unsupported_400(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "ai_payload_exchange.jsonl"
+            client = self._make_client(log_path)
+            client.config.model = "gpt-5"
+            client.config._request_reasoning_effort = "low"
 
             mock_400 = mock.Mock()
             mock_400.status_code = 400
             mock_400.ok = False
-            mock_400.text = "{\"error\":{\"message\":\"Unsupported value: 'temperature'\"}}"
+            mock_400.text = "{\"error\":{\"message\":\"Unsupported value: 'reasoning_effort'\"}}"
             mock_400.json.return_value = {
                 "error": {
-                    "message": "Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.",
+                    "message": "Unsupported value: 'reasoning_effort'",
                     "type": "invalid_request_error",
-                    "param": "temperature",
+                    "param": "reasoning_effort",
                     "code": "unsupported_value",
                 }
             }
@@ -163,13 +193,8 @@ class AIClientPayloadLoggingTests(unittest.TestCase):
             self.assertEqual(post_mock.call_count, 2)
             first_json = post_mock.call_args_list[0].kwargs.get("json", {})
             second_json = post_mock.call_args_list[1].kwargs.get("json", {})
-            self.assertEqual(first_json.get("temperature"), 0.2)
-            self.assertEqual(second_json.get("temperature"), 1)
-            lines = log_path.read_text(encoding="utf-8").strip().splitlines()
-            self.assertEqual(len(lines), 1)
-            payload = json.loads(lines[0])
-            self.assertEqual(payload["response_status"], 200)
-            self.assertEqual(payload["request"].get("temperature"), 1)
+            self.assertEqual(first_json.get("reasoning_effort"), "low")
+            self.assertNotIn("reasoning_effort", second_json)
 
 
 if __name__ == "__main__":

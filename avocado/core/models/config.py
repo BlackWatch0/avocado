@@ -29,9 +29,11 @@ class AIConfig:
     model: str = "gpt-4o-mini"
     high_load_model: str = ""
     high_load_event_threshold: int = 0
-    high_load_auto_enabled: bool = False
-    high_load_auto_score_threshold: float = 0.65
-    high_load_auto_event_baseline: int = 12
+    high_load_auto_enabled: bool = True
+    high_load_auto_score_threshold: float = 0.80
+    high_load_auto_event_baseline: int = 20
+    high_load_min_event_count: int = 20
+    high_load_reasoning_effort: str = "low"
     high_load_use_flex: bool = False
     high_load_flex_fallback_to_auto: bool = True
     timeout_seconds: int = 90
@@ -40,13 +42,26 @@ class AIConfig:
     payload_logging_enabled: bool = False
     payload_log_path: str = "data/test_logs/ai_payload_exchange.jsonl"
     payload_log_max_chars: int = 200000
+    sparse_new_event_context_enabled: bool = True
+    sparse_context_scope: str = "all_targets"
+    sparse_new_event_neighbor_count: int = 1
+    sparse_new_event_max_context_requests: int = 3
+    payload_target_description_max_chars: int = 160
+    payload_neighbor_description_max_chars: int = 80
+    payload_max_full_detail_events: int = 10
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AIConfig":
         data = data or {}
-        auto_score_threshold = float(data.get("high_load_auto_score_threshold", 0.65))
+        auto_score_threshold = float(data.get("high_load_auto_score_threshold", 0.80))
         if auto_score_threshold < 0:
             auto_score_threshold = 0.0
+        reasoning_effort = str(data.get("high_load_reasoning_effort", "low")).strip().lower() or "low"
+        if reasoning_effort not in {"low", "medium", "high", "default"}:
+            reasoning_effort = "low"
+        sparse_context_scope = str(data.get("sparse_context_scope", "all_targets")).strip().lower() or "all_targets"
+        if sparse_context_scope not in {"new_only", "all_targets"}:
+            sparse_context_scope = "all_targets"
         return cls(
             base_url=str(data.get("base_url", "https://api.openai.com/v1")).strip()
             or "https://api.openai.com/v1",
@@ -54,9 +69,11 @@ class AIConfig:
             model=str(data.get("model", "gpt-4o-mini")).strip() or "gpt-4o-mini",
             high_load_model=str(data.get("high_load_model", "")).strip(),
             high_load_event_threshold=max(0, int(data.get("high_load_event_threshold", 0))),
-            high_load_auto_enabled=bool(data.get("high_load_auto_enabled", False)),
+            high_load_auto_enabled=bool(data.get("high_load_auto_enabled", True)),
             high_load_auto_score_threshold=auto_score_threshold,
-            high_load_auto_event_baseline=max(1, int(data.get("high_load_auto_event_baseline", 12))),
+            high_load_auto_event_baseline=max(1, int(data.get("high_load_auto_event_baseline", 20))),
+            high_load_min_event_count=max(1, int(data.get("high_load_min_event_count", 20))),
+            high_load_reasoning_effort=reasoning_effort,
             high_load_use_flex=bool(data.get("high_load_use_flex", False)),
             high_load_flex_fallback_to_auto=bool(data.get("high_load_flex_fallback_to_auto", True)),
             timeout_seconds=int(data.get("timeout_seconds", 90)),
@@ -69,6 +86,17 @@ class AIConfig:
             ).strip()
             or "data/test_logs/ai_payload_exchange.jsonl",
             payload_log_max_chars=max(1000, int(data.get("payload_log_max_chars", 200000))),
+            sparse_new_event_context_enabled=bool(data.get("sparse_new_event_context_enabled", True)),
+            sparse_context_scope=sparse_context_scope,
+            sparse_new_event_neighbor_count=max(0, int(data.get("sparse_new_event_neighbor_count", 1))),
+            sparse_new_event_max_context_requests=max(1, int(data.get("sparse_new_event_max_context_requests", 3))),
+            payload_target_description_max_chars=max(
+                1, int(data.get("payload_target_description_max_chars", 160))
+            ),
+            payload_neighbor_description_max_chars=max(
+                1, int(data.get("payload_neighbor_description_max_chars", 80))
+            ),
+            payload_max_full_detail_events=max(1, int(data.get("payload_max_full_detail_events", 10))),
         )
 
 

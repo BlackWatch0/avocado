@@ -1,14 +1,14 @@
-import { apiGetJson, apiPost, apiPut } from "./api.js?v=20260303e";
-import { renderAiChanges, hideAllKebabMenus } from "./ai_changes.js?v=20260303e";
-import { renderAiBytesChart } from "./ai_bytes_chart.js?v=20260303e";
-import { renderCalendars, readLockedSourceCalendarIds } from "./calendars_table.js?v=20260303e";
-import { bindConfig, readPayload } from "./config_form.js?v=20260303e";
-import { dom } from "./dom.js?v=20260303e";
-import { I18N } from "./i18n.js?v=20260303e";
-import { renderAuditLogs } from "./logs_audit.js?v=20260303e";
-import { renderSyncLogs } from "./logs_sync.js?v=20260303e";
-import { AI_BYTES_CACHE_KEY, AI_BYTES_DAYS_KEY, LANG_PREF_KEY, state } from "./state.js?v=20260303e";
-import { retranslateStatus, setActiveTab, setStatus, withPending } from "./ui.js?v=20260303e";
+import { apiGetJson, apiPost, apiPut } from "./api.js?v=20260304c";
+import { renderAiChanges, hideAllKebabMenus } from "./ai_changes.js?v=20260304c";
+import { renderAiBytesChart } from "./ai_bytes_chart.js?v=20260304c";
+import { renderCalendars, readLockedSourceCalendarIds } from "./calendars_table.js?v=20260304c";
+import { bindConfig, readPayload } from "./config_form.js?v=20260304c";
+import { dom } from "./dom.js?v=20260304c";
+import { I18N } from "./i18n.js?v=20260304c";
+import { renderAuditLogs } from "./logs_audit.js?v=20260304c";
+import { renderSyncLogs } from "./logs_sync.js?v=20260304c";
+import { AI_BYTES_CACHE_KEY, AI_BYTES_DAYS_KEY, LANG_PREF_KEY, state } from "./state.js?v=20260304c";
+import { retranslateStatus, setActiveTab, setStatus, withPending } from "./ui.js?v=20260304c";
 import {
   ensureSelectOption,
   escapeHtml,
@@ -20,7 +20,7 @@ import {
   toDisplayValue,
   toPrettyJson,
   joinList,
-} from "./utils.js?v=20260303e";
+} from "./utils.js?v=20260304c";
 
 const template = (text, vars = {}) =>
   String(text || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => String(vars[key] ?? ""));
@@ -266,6 +266,7 @@ const loadAiChanges = async () => {
     state,
     aiChangesList: dom.aiChangesList,
     changes: data.changes || [],
+    groups: data.groups || [],
     t,
     escapeHtml,
     shortText,

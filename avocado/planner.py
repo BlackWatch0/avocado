@@ -5,7 +5,7 @@ from typing import Any
 
 from avocado.core.models import DEFAULT_AI_SYSTEM_PROMPT, EventRecord
 
-COMPACT_PAYLOAD_VERSION = "compact_v1"
+COMPACT_PAYLOAD_VERSION = "compact_v3"
 
 
 def _normalize_user_intent(value: Any) -> str:
@@ -29,10 +29,14 @@ def _build_compact_events_by_uid(
     *,
     source_events: list[dict[str, Any]],
     target_uids: list[str],
-    description_max_chars: int,
+    target_description_max_chars: int,
+    neighbor_description_max_chars: int,
+    sparse_other_events: bool = False,
+    full_detail_uids: set[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     compact_events: dict[str, dict[str, Any]] = {}
     target_uid_set = {str(uid or "").strip() for uid in target_uids if str(uid or "").strip()}
+    full_detail_uid_set = {str(uid or "").strip() for uid in (full_detail_uids or set()) if str(uid or "").strip()}
     for item in source_events:
         if not isinstance(item, dict):
             continue
@@ -49,26 +53,54 @@ def _build_compact_events_by_uid(
             ai_task = {}
 
         summary = str(item.get("summary", "") or "")
-        compact_item: dict[str, Any] = {
-            "t": [start, end],
-            "s": summary,
-            "k": bool(item.get("locked", ai_task.get("locked", False))),
-        }
         location = str(item.get("location", "") or "").strip()
-        if location:
-            compact_item["l"] = location
-
-        user_intent = _normalize_user_intent(item.get("user_intent", ai_task.get("user_intent", "")))
-        if uid in target_uid_set and user_intent:
-            compact_item["i"] = user_intent
-
         description = str(item.get("description", "") or "")
-        include_description = bool(description.strip()) and (uid in target_uid_set or not summary.strip())
-        if include_description:
-            compact_item["d"] = _truncate_text(description, description_max_chars)
+        user_intent = _normalize_user_intent(item.get("user_intent", ai_task.get("user_intent", "")))
+        if uid not in target_uid_set:
+            user_intent = ""
 
+        is_full_detail = (not sparse_other_events) or (uid in full_detail_uid_set)
+        compact_item: dict[str, Any] = {
+            "time_range": [start, end],
+            "summary": summary,
+            "all_day": bool(item.get("all_day", False)),
+            "locked": bool(item.get("locked", ai_task.get("locked", False))),
+            "detail_level": "full" if is_full_detail else "busy",
+        }
+        if is_full_detail:
+            compact_item["location"] = location
+            description_limit = target_description_max_chars if uid in target_uid_set else neighbor_description_max_chars
+            compact_item["description"] = _truncate_text(description, description_limit) if description.strip() else ""
+            if uid in target_uid_set:
+                compact_item["user_intent"] = user_intent
         compact_events[uid] = compact_item
     return compact_events
+
+
+def _normalize_context_request_item(item: Any) -> dict[str, Any] | None:
+    if isinstance(item, str):
+        text = item.strip()
+        if not text:
+            return None
+        return {"date": text}
+    if not isinstance(item, dict):
+        return None
+    cleaned: dict[str, Any] = {}
+    date_value = str(item.get("date", "") or "").strip()
+    start_value = str(item.get("start", "") or "").strip()
+    end_value = str(item.get("end", "") or "").strip()
+    if date_value:
+        cleaned["date"] = date_value
+    if start_value:
+        cleaned["start"] = start_value
+    if end_value:
+        cleaned["end"] = end_value
+    reason_value = str(item.get("reason", "") or "").strip()
+    if reason_value:
+        cleaned["reason"] = reason_value
+    if not cleaned:
+        return None
+    return cleaned
 
 
 def _normalize_change_item(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -110,6 +142,13 @@ def build_planning_payload(
     target_uids: list[str] | None = None,
     compact: bool = True,
     description_max_chars: int = 240,
+    target_description_max_chars: int | None = None,
+    neighbor_description_max_chars: int | None = None,
+    sparse_other_events: bool = False,
+    full_detail_uids: list[str] | None = None,
+    planning_phase: str = "",
+    requested_context: list[dict[str, Any]] | None = None,
+    current_time: str = "",
 ) -> dict[str, Any]:
     base_payload = {
         "window": {
@@ -136,12 +175,31 @@ def build_planning_payload(
         seen_target_uids.add(normalized_uid)
 
     payload = dict(base_payload)
+    resolved_target_description_max_chars = max(
+        1, int(target_description_max_chars if target_description_max_chars is not None else description_max_chars)
+    )
+    resolved_neighbor_description_max_chars = max(
+        1, int(neighbor_description_max_chars if neighbor_description_max_chars is not None else description_max_chars)
+    )
     payload["events_by_uid"] = _build_compact_events_by_uid(
         source_events=source_events,
         target_uids=dedup_target_uids,
-        description_max_chars=description_max_chars,
+        target_description_max_chars=resolved_target_description_max_chars,
+        neighbor_description_max_chars=resolved_neighbor_description_max_chars,
+        sparse_other_events=sparse_other_events,
+        full_detail_uids=set(full_detail_uids or []),
     )
     payload["target_uids"] = dedup_target_uids
+    current_time_text = str(current_time or "").strip()
+    if current_time_text:
+        payload["current_time"] = current_time_text
+    phase = str(planning_phase or "").strip()
+    if phase:
+        payload["planning_phase"] = phase
+    if sparse_other_events:
+        payload["context_strategy"] = "target_neighbors_full_others_busy"
+    if requested_context:
+        payload["requested_context"] = list(requested_context)
     return payload
 
 
@@ -157,9 +215,11 @@ def normalize_ai_plan_result(raw_result: Any) -> dict[str, list[dict[str, Any]]]
     result = raw_result if isinstance(raw_result, dict) else {}
     raw_changes = result.get("changes", [])
     raw_creates = result.get("creates", [])
+    raw_context_requests = result.get("context_requests", [])
 
     normalized_changes: list[dict[str, Any]] = []
     normalized_creates: list[dict[str, Any]] = []
+    normalized_context_requests: list[dict[str, Any]] = []
 
     if isinstance(raw_changes, list):
         for item in raw_changes:
@@ -176,8 +236,13 @@ def normalize_ai_plan_result(raw_result: Any) -> dict[str, list[dict[str, Any]]]
             cleaned = _normalize_create_item(item)
             if cleaned is not None:
                 normalized_creates.append(cleaned)
+    if isinstance(raw_context_requests, list):
+        for item in raw_context_requests:
+            cleaned_request = _normalize_context_request_item(item)
+            if cleaned_request is not None:
+                normalized_context_requests.append(cleaned_request)
 
-    return {"changes": normalized_changes, "creates": normalized_creates}
+    return {"changes": normalized_changes, "creates": normalized_creates, "context_requests": normalized_context_requests}
 
 
 def normalize_changes(raw_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:

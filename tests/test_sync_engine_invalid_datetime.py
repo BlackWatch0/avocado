@@ -172,6 +172,7 @@ class _ModelCaptureAIClient:
     calls = 0
     models: list[str] = []
     service_tiers: list[str] = []
+    reasoning_efforts: list[str] = []
 
     def __init__(self, config) -> None:
         self.config = config
@@ -185,6 +186,7 @@ class _ModelCaptureAIClient:
         _ModelCaptureAIClient.calls += 1
         _ModelCaptureAIClient.models.append(str(self.config.model))
         _ModelCaptureAIClient.service_tiers.append(str(getattr(self.config, "_request_service_tier", "")))
+        _ModelCaptureAIClient.reasoning_efforts.append(str(getattr(self.config, "_request_reasoning_effort", "")))
         return {"changes": []}
 
 
@@ -234,10 +236,22 @@ class _SplitCreateAIClient:
                 user_payload = {}
             break
         target_uids = user_payload.get("target_uids", []) if isinstance(user_payload, dict) else []
-        target_uid = str((target_uids[0] if isinstance(target_uids, list) and target_uids else "") or "").strip()
         events_by_uid = user_payload.get("events_by_uid", {}) if isinstance(user_payload, dict) else {}
+        target_uid = ""
+        if isinstance(target_uids, list):
+            for candidate in target_uids:
+                uid = str(candidate or "").strip()
+                if not uid:
+                    continue
+                payload_item = events_by_uid.get(uid, {}) if isinstance(events_by_uid, dict) else {}
+                user_intent = str((payload_item or {}).get("user_intent", "") or "").strip()
+                if user_intent:
+                    target_uid = uid
+                    break
+            if not target_uid and target_uids:
+                target_uid = str(target_uids[0] or "").strip()
         event_payload = events_by_uid.get(target_uid, {}) if isinstance(events_by_uid, dict) else {}
-        event_range = event_payload.get("t", []) if isinstance(event_payload, dict) else []
+        event_range = event_payload.get("time_range", []) if isinstance(event_payload, dict) else []
         if not target_uid or not isinstance(event_range, list) or len(event_range) < 2:
             return {"changes": [], "creates": []}
         source_start = datetime.fromisoformat(str(event_range[0]))
@@ -267,6 +281,29 @@ class _SplitCreateAIClient:
         }
 
 
+class _ExpiredEventAIClient:
+    calls = 0
+
+    def __init__(self, _config) -> None:
+        self.last_usage = {}
+
+    def is_configured(self) -> bool:
+        return True
+
+    def generate_changes(self, *, messages):
+        _ = messages
+        _ExpiredEventAIClient.calls += 1
+        return {
+            "changes": [
+                {
+                    "uid": "uid-1",
+                    "summary": "Should not apply to expired event",
+                    "reason": "test expired skip",
+                }
+            ]
+        }
+
+
 class SyncEngineInvalidDatetimeTests(unittest.TestCase):
     def test_invalid_datetime_does_not_fail_whole_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -286,6 +323,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
                     },
                     "calendar_rules": {
                         "stack_calendar_id": "cal-stack",
@@ -351,6 +389,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
                     },
                     "calendar_rules": {
                         "stack_calendar_id": "cal-stack",
@@ -372,6 +411,68 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertEqual(_CountingAIClient.calls, 0)
             audit_events = store.recent_audit_events(limit=200)
+            self.assertTrue(any(item["action"] == "skip_ai_no_targets" for item in audit_events))
+
+    def test_ai_skips_changes_for_expired_events(self) -> None:
+        class _ExpiredIntentCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                event = self._events[self.user_id]["uid-1"]
+                event.start = now - timedelta(hours=3)
+                event.end = now - timedelta(hours=2)
+                event.description = (
+                    "[AI Task]\n"
+                    "locked: false\n"
+                    "user_intent: move this\n"
+                    "[/AI Task]"
+                )
+                self._events[self.user_id]["uid-2"].description = (
+                    "[AI Task]\n"
+                    "locked: false\n"
+                    "user_intent:\n"
+                    "[/AI Task]"
+                )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _ExpiredEventAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _ExpiredIntentCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _ExpiredEventAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_ExpiredEventAIClient.calls, 0)
+            audit_events = store.recent_audit_events(limit=300)
             self.assertTrue(any(item["action"] == "skip_ai_no_targets" for item in audit_events))
 
     def test_new_calendar_import_triggers_ai_even_without_user_intent(self) -> None:
@@ -413,6 +514,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
                     },
                     "calendar_rules": {
                         "stack_calendar_id": "cal-stack",
@@ -434,6 +536,64 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertEqual(_CountingAIClient.calls, 1)
             audit_events = store.recent_audit_events(limit=200)
+            self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
+
+    def test_user_time_overlap_without_intent_still_triggers_ai(self) -> None:
+        class _NoIntentOverlapCalDAVService(_FakeCalDAVService):
+            def __init__(self, config) -> None:
+                super().__init__(config)
+                for event in self._events[self.user_id].values():
+                    event.description = (
+                        "[AI Task]\n"
+                        "locked: false\n"
+                        "user_intent:\n"
+                        "[/AI Task]"
+                    )
+                base_event = self._events[self.user_id]["uid-1"]
+                overlap_event = self._events[self.user_id]["uid-2"]
+                overlap_event.start = base_event.start + timedelta(minutes=15)
+                overlap_event.end = base_event.end + timedelta(minutes=15)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _CountingAIClient.calls = 0
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _NoIntentOverlapCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _CountingAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_CountingAIClient.calls, 1)
+            audit_events = store.recent_audit_events(limit=300)
+            self.assertTrue(any(item["action"] == "overlap_targets_detected" for item in audit_events))
             self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
 
     def test_new_calendar_mapped_but_not_cleaned_still_imports_and_triggers_ai(self) -> None:
@@ -477,6 +637,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
                     },
                     "calendar_rules": {
                         "stack_calendar_id": "cal-stack",
@@ -510,7 +671,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             audit_events = store.recent_audit_events(limit=200)
             self.assertTrue(any(item["action"] == "ai_request" for item in audit_events))
 
-    def test_high_load_model_is_used_when_event_count_exceeds_threshold(self) -> None:
+    def test_high_load_model_is_used_when_auto_score_and_min_count_match(self) -> None:
         class _ManyEventsCalDAVService(_FakeCalDAVService):
             def __init__(self, config) -> None:
                 super().__init__(config)
@@ -547,7 +708,11 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "api_key": "token",
                         "model": "gpt-4o-mini",
                         "high_load_model": "gpt-5",
-                        "high_load_event_threshold": 3,
+                        "high_load_event_threshold": 0,
+                        "high_load_auto_enabled": True,
+                        "high_load_auto_score_threshold": 0.2,
+                        "high_load_auto_event_baseline": 3,
+                        "high_load_min_event_count": 3,
                     },
                     "calendar_rules": {
                         "stack_calendar_id": "cal-stack",
@@ -561,6 +726,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             _ModelCaptureAIClient.calls = 0
             _ModelCaptureAIClient.models = []
             _ModelCaptureAIClient.service_tiers = []
+            _ModelCaptureAIClient.reasoning_efforts = []
 
             with (
                 mock.patch("avocado.sync.pipeline.CalDAVService", _ManyEventsCalDAVService),
@@ -571,11 +737,13 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertEqual(_ModelCaptureAIClient.calls, 1)
             self.assertEqual(_ModelCaptureAIClient.models[-1], "gpt-5")
+            self.assertEqual(_ModelCaptureAIClient.reasoning_efforts[-1], "low")
             audit_events = store.recent_audit_events(limit=200)
             ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
             self.assertTrue(ai_request_events)
             self.assertEqual(ai_request_events[-1]["details"].get("model"), "gpt-5")
             self.assertTrue(bool(ai_request_events[-1]["details"].get("high_load_model_active")))
+            self.assertEqual(ai_request_events[-1]["details"].get("model_route"), "high_load")
 
     def test_high_load_flex_tier_is_enabled_by_switch(self) -> None:
         class _ManyEventsCalDAVService(_FakeCalDAVService):
@@ -614,7 +782,11 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "api_key": "token",
                         "model": "gpt-4o-mini",
                         "high_load_model": "gpt-5",
-                        "high_load_event_threshold": 3,
+                        "high_load_event_threshold": 0,
+                        "high_load_auto_enabled": True,
+                        "high_load_auto_score_threshold": 0.2,
+                        "high_load_auto_event_baseline": 3,
+                        "high_load_min_event_count": 3,
                         "high_load_use_flex": True,
                     },
                     "calendar_rules": {
@@ -629,6 +801,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             _ModelCaptureAIClient.calls = 0
             _ModelCaptureAIClient.models = []
             _ModelCaptureAIClient.service_tiers = []
+            _ModelCaptureAIClient.reasoning_efforts = []
 
             with (
                 mock.patch("avocado.sync.pipeline.CalDAVService", _ManyEventsCalDAVService),
@@ -644,6 +817,62 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
             self.assertTrue(ai_request_events)
             self.assertEqual(ai_request_events[-1]["details"].get("service_tier"), "flex")
+
+    def test_high_load_model_is_not_used_below_min_event_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_path = root / "config.yaml"
+            db_path = root / "state.db"
+            manager = ConfigManager(config_path)
+            manager.update(
+                {
+                    "caldav": {
+                        "base_url": "https://example.test/caldav",
+                        "username": "user",
+                        "password": "pass",
+                    },
+                    "ai": {
+                        "enabled": True,
+                        "base_url": "https://example.test/v1",
+                        "api_key": "token",
+                        "model": "gpt-4o-mini",
+                        "high_load_model": "gpt-5",
+                        "high_load_event_threshold": 0,
+                        "high_load_auto_enabled": True,
+                        "high_load_auto_score_threshold": 0.1,
+                        "high_load_auto_event_baseline": 1,
+                        "high_load_min_event_count": 10,
+                    },
+                    "calendar_rules": {
+                        "stack_calendar_id": "cal-stack",
+                        "user_calendar_id": "cal-user",
+                        "new_calendar_id": "cal-new",
+                    },
+                }
+            )
+            store = StateStore(str(db_path))
+            engine = SyncEngine(manager, store)
+            _ModelCaptureAIClient.calls = 0
+            _ModelCaptureAIClient.models = []
+            _ModelCaptureAIClient.service_tiers = []
+            _ModelCaptureAIClient.reasoning_efforts = []
+
+            with (
+                mock.patch("avocado.sync.pipeline.CalDAVService", _FakeCalDAVService),
+                mock.patch("avocado.sync.pipeline.OpenAICompatibleClient", _ModelCaptureAIClient),
+            ):
+                result = engine.run_once(trigger="manual")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(_ModelCaptureAIClient.calls, 1)
+            self.assertEqual(_ModelCaptureAIClient.models[-1], "gpt-4o-mini")
+            self.assertEqual(_ModelCaptureAIClient.reasoning_efforts[-1], "")
+            audit_events = store.recent_audit_events(limit=200)
+            ai_request_events = [item for item in audit_events if item["action"] == "ai_request"]
+            self.assertTrue(ai_request_events)
+            details = ai_request_events[-1]["details"]
+            self.assertEqual(details.get("model_route"), "base")
+            self.assertEqual(details.get("model_route_reason"), "auto_score_met_but_below_min_event_count")
 
     def test_high_load_auto_scoring_can_activate_model_and_flex(self) -> None:
         class _DenseEventsCalDAVService(_FakeCalDAVService):
@@ -704,6 +933,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "high_load_auto_enabled": True,
                         "high_load_auto_score_threshold": 0.3,
                         "high_load_auto_event_baseline": 2,
+                        "high_load_min_event_count": 2,
                         "high_load_use_flex": True,
                     },
                     "calendar_rules": {
@@ -718,6 +948,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             _ModelCaptureAIClient.calls = 0
             _ModelCaptureAIClient.models = []
             _ModelCaptureAIClient.service_tiers = []
+            _ModelCaptureAIClient.reasoning_efforts = []
 
             with (
                 mock.patch("avocado.sync.pipeline.CalDAVService", _DenseEventsCalDAVService),
@@ -778,6 +1009,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
                     },
                     "calendar_rules": {
                         "stack_calendar_id": "cal-stack",
@@ -830,10 +1062,12 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                         "base_url": "https://example.test/v1",
                         "api_key": "token",
                         "model": "gpt-test",
+                        "sparse_new_event_context_enabled": False,
                     },
                     "sync": {
                         "window_days": 1,
                         "interval_seconds": 300,
+                        "timezone_source": "manual",
                         "timezone": "UTC",
                     },
                     "calendar_rules": {
@@ -895,6 +1129,7 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
             store = StateStore(str(db_path))
             engine = SyncEngine(manager, store)
             fake_service = _FakeCalDAVService(object())
+            fake_service._events[fake_service.user_id]["uid-2"].description = "[AI Task]\nlocked: false\nuser_intent: ''\n[/AI Task]"
             _SplitCreateAIClient.calls = 0
 
             with (
@@ -904,7 +1139,9 @@ class SyncEngineInvalidDatetimeTests(unittest.TestCase):
                 first = engine.run_once(trigger="manual")
                 self.assertEqual(first.status, "success")
                 source_mapping = next(
-                    item for item in store.list_event_mappings() if str(item.get("source_uid", "")) == "uid-1"
+                    item
+                    for item in store.list_event_mappings()
+                    if str(item.get("source", "")) == "user" and str(item.get("source_uid", "")) == "uid-1"
                 )
                 source_user_uid = str(source_mapping.get("user_uid", ""))
                 for uid, event in fake_service._events[fake_service.user_id].items():

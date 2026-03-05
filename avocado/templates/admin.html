@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Avocado Admin</title>
-  <link rel="stylesheet" href="/static/admin/styles/base.css">
-  <link rel="stylesheet" href="/static/admin/styles/layout.css">
-  <link rel="stylesheet" href="/static/admin/styles/components.css">
-  <link rel="stylesheet" href="/static/admin/styles/logs.css">
+  <link rel="stylesheet" href="/static/admin/styles/base.css?v=20260304c">
+  <link rel="stylesheet" href="/static/admin/styles/layout.css?v=20260304c">
+  <link rel="stylesheet" href="/static/admin/styles/components.css?v=20260304c">
+  <link rel="stylesheet" href="/static/admin/styles/logs.css?v=20260304c">
 </head>
 <body>
   <main class="page">
@@ -65,11 +65,29 @@
         </label>
         <label><span data-i18n="field.high_load_model">High-Load Model</span><input id="ai-high-load-model" type="text" placeholder="e.g. gpt-5"></label>
         <label><span data-i18n="field.high_load_event_threshold">High-Load Event Threshold</span><input id="ai-high-load-event-threshold" type="number" min="0" required></label>
+        <label><span data-i18n="field.high_load_min_event_count">High-Load Min Event Count</span><input id="ai-high-load-min-event-count" type="number" min="1" required></label>
+        <label><span data-i18n="field.high_load_reasoning_effort">High-Load Reasoning Effort</span>
+          <select id="ai-high-load-reasoning-effort" required>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="default">default</option>
+          </select>
+        </label>
         <label class="checkbox">
           <input id="ai-high-load-auto-enabled" type="checkbox">
           <span data-i18n="field.high_load_auto_enabled">Auto Detect Heavy Load</span>
           <span class="hint-icon" data-i18n-title="hint.high_load_auto_calc" title="Score = 0.45*density + 0.35*count + 0.20*conflict. Density=busy time/window, count=events/baseline, conflict=overlap ratio. Trigger when score reaches threshold.">i</span>
         </label>
+        <label><span data-i18n="field.sparse_context_scope">Sparse Context Scope</span>
+          <select id="ai-sparse-context-scope" required>
+            <option value="all_targets">all_targets</option>
+            <option value="new_only">new_only</option>
+          </select>
+        </label>
+        <label><span data-i18n="field.payload_target_description_max_chars">Target Description Max Chars</span><input id="ai-payload-target-description-max-chars" type="number" min="1" required></label>
+        <label><span data-i18n="field.payload_neighbor_description_max_chars">Neighbor Description Max Chars</span><input id="ai-payload-neighbor-description-max-chars" type="number" min="1" required></label>
+        <label><span data-i18n="field.payload_max_full_detail_events">Payload Max Full-Detail Events</span><input id="ai-payload-max-full-detail-events" type="number" min="1" required></label>
         <label class="checkbox"><input id="ai-high-load-use-flex" type="checkbox"> <span data-i18n="field.high_load_use_flex">Use Flex Tier Above Threshold</span></label>
         <label class="checkbox"><input id="ai-high-load-flex-fallback-auto" type="checkbox"> <span data-i18n="field.high_load_flex_fallback_to_auto">Fallback to Auto Tier if Flex Fails</span></label>
         <label><span data-i18n="field.timeout_seconds">Timeout Seconds</span><input id="ai-timeout-seconds" type="number" min="1" required></label>
@@ -240,6 +258,6 @@
     </form>
   </main>
 
-  <script type="module" src="/static/admin/index.js?v=20260303e"></script>
+  <script type="module" src="/static/admin/index.js?v=20260304c"></script>
 </body>
 </html>

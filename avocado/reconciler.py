@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Iterable
 
 from avocado.core.models import EventRecord, parse_iso_datetime
@@ -8,6 +9,20 @@ from avocado.core.models import EventRecord, parse_iso_datetime
 
 ALLOWED_FIELDS = {"start", "end", "summary", "location", "description"}
 APPLY_FIELD_ORDER = ("start", "end", "summary", "location", "description")
+
+
+def _normalize_all_day_range(start_value: datetime | None, end_value: datetime | None) -> tuple[datetime | None, datetime | None]:
+    if start_value is None and end_value is None:
+        return start_value, end_value
+    normalized_start = start_value
+    normalized_end = end_value
+    if normalized_start is not None:
+        normalized_start = datetime.combine(normalized_start.date(), time.min, tzinfo=timezone.utc)
+    if normalized_end is not None:
+        normalized_end = datetime.combine(normalized_end.date(), time.min, tzinfo=timezone.utc)
+    if normalized_start is not None and normalized_end is not None and normalized_end <= normalized_start:
+        normalized_end = normalized_start + timedelta(days=1)
+    return normalized_start, normalized_end
 
 
 @dataclass
@@ -58,6 +73,15 @@ def apply_change(
                 event=current_event,
                 blocked_fields=[],
             )
+    if current_event.all_day and ("start" in parsed_datetimes or "end" in parsed_datetimes):
+        normalized_start, normalized_end = _normalize_all_day_range(
+            parsed_datetimes.get("start", current_event.start),
+            parsed_datetimes.get("end", current_event.end),
+        )
+        if "start" in parsed_datetimes:
+            parsed_datetimes["start"] = normalized_start
+        if "end" in parsed_datetimes:
+            parsed_datetimes["end"] = normalized_end
 
     updated = current_event.clone()
     applied_any = False
@@ -89,4 +113,3 @@ def apply_change(
         event=updated,
         blocked_fields=blocked_fields,
     )
-

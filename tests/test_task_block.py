@@ -113,6 +113,11 @@ class TaskBlockTests(unittest.TestCase):
         self.assertTrue(bool(payload.get("locked")))
         self.assertIn("locked: true", updated)
 
+    def test_strip_ai_task_block_removes_orphan_markers(self) -> None:
+        description = "Visible\n[AI Task]\nVisible 2\n[/AI Task]\n[AI Task]"
+        stripped = strip_ai_task_block(description)
+        self.assertEqual(stripped, "Visible")
+
 
 if __name__ == "__main__":
     unittest.main()

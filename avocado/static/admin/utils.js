@@ -97,7 +97,7 @@ export const formatEventRange = (start, end, fallbackText) => {
   const startText = String(start || "").trim();
   const endText = String(end || "").trim();
   if (!startText && !endText) return fallbackText;
-  const left = startText || "-";
-  const right = endText || "-";
+  const left = startText ? formatShortTime(startText) : "-";
+  const right = endText ? formatShortTime(endText) : "-";
   return `${left} -> ${right}`;
 };

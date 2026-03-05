@@ -162,6 +162,24 @@ class OpenAICompatibleClient:
             and (param in {"temperature", ""} or code == "unsupported_value")
         )
 
+    @staticmethod
+    def _is_reasoning_effort_unsupported_400(response: requests.Response) -> bool:
+        if int(getattr(response, "status_code", 0) or 0) != 400:
+            return False
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        message = str(error.get("message", "") or "").casefold()
+        param = str(error.get("param", "") or "").casefold()
+        code = str(error.get("code", "") or "").casefold()
+        return (
+            "reasoning_effort" in message
+            and ("unsupported" in message or "invalid" in message or "unknown" in message)
+            and (param in {"reasoning_effort", ""} or code in {"unsupported_value", "invalid_request_error", ""})
+        )
+
     def _post_chat(self, endpoint: str, request_payload: dict[str, Any]) -> requests.Response:
         tier = str(request_payload.get("service_tier", "") or "").strip().lower()
         return requests.post(
@@ -222,15 +240,21 @@ class OpenAICompatibleClient:
             return {"changes": []}
         self.last_usage = {}
         endpoint = self._chat_endpoint()
+        model_name = str(self.config.model or "").strip()
         request_payload = {
-            "model": self.config.model,
+            "model": model_name,
             "messages": messages,
-            "temperature": 0.2,
             "response_format": {"type": "json_object"},
         }
+        # GPT-5 chat models reject non-default temperature in chat/completions.
+        if not model_name.startswith("gpt-5"):
+            request_payload["temperature"] = 0.2
         service_tier = str(getattr(self.config, "_request_service_tier", "") or "").strip().lower()
         if service_tier in {"auto", "default", "flex"}:
             request_payload["service_tier"] = service_tier
+        reasoning_effort = str(getattr(self.config, "_request_reasoning_effort", "") or "").strip().lower()
+        if reasoning_effort in {"low", "medium", "high"}:
+            request_payload["reasoning_effort"] = reasoning_effort
         response: requests.Response | None = None
         request_payload_used = dict(request_payload)
         try:
@@ -238,6 +262,13 @@ class OpenAICompatibleClient:
                 endpoint=endpoint,
                 request_payload=request_payload,
             )
+            if not response.ok and self._is_reasoning_effort_unsupported_400(response):
+                retry_payload = dict(request_payload_used)
+                retry_payload.pop("reasoning_effort", None)
+                response, request_payload_used = self._post_chat_with_flex_policy(
+                    endpoint=endpoint,
+                    request_payload=retry_payload,
+                )
             if not response.ok and self._is_temperature_unsupported_400(response):
                 retry_payload = dict(request_payload_used)
                 retry_payload["temperature"] = 1
